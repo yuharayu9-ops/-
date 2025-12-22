@@ -3,76 +3,278 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>放課後等デイサービス 送迎管理システム</title>
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <title>Houkago Planner - 送迎表管理システム</title>
+    
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+    
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
     <style>
+        body {
+            font-family: 'Inter', 'Noto Sans JP', sans-serif;
+            background-color: #f8fafc;
+        }
         @media print {
+            @page { size: A4 landscape; margin: 4mm; }
             .no-print { display: none !important; }
-            body { background: white; }
-            .print-area { width: 100%; height: auto; padding: 0; margin: 0; }
-            @page { size: A4 landscape; margin: 10mm; }
+            main { padding: 0 !important; overflow: visible !important; }
+            .sheet { border: 2px solid black !important; padding: 10px !important; width: 100% !important; margin: 0 !important; box-shadow: none !important; font-size: 11px; }
+            table { border-collapse: collapse; width: 100%; border: 1px solid black !important; }
+            th, td { border: 1px solid black !important; padding: 2px 4px !important; }
+            input { border: none !important; background: transparent !important; }
         }
     </style>
+
+    <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@18.2.0",
+        "react-dom": "https://esm.sh/react-dom@18.2.0",
+        "lucide-react": "https://esm.sh/lucide-react@0.263.1",
+        "@google/genai": "https://esm.sh/@google/genai@1.34.0"
+      }
+    }
+    </script>
 </head>
-<body class="bg-gray-50 min-h-screen">
+<body>
     <div id="root"></div>
 
-    <script type="text/babel">
-        // ※ ここにAI Studioで生成された「アプリ.tsx」の中身をReact.js形式に調整して埋め込みます
-        // 実際には膨大なコードになるため、ここでは主要な構造を反映した「完成版テンプレート」を提示します
-        
-        const { useState, useEffect, useMemo } = React;
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect, useMemo } from 'react';
+        import ReactDOM from 'react-dom';
+        import { 
+            Users, Truck, Calendar, Plus, Trash2, Upload, UserCheck,
+            Wand2, Printer, Edit2, Clock, MapPin, Save, UserPlus 
+        } from 'lucide-react';
+        import { GoogleGenAI, Type } from "@google/genai";
+
+        // ==========================================
+        // CONFIGURATION: 必要に応じてAPIキーを設定してください
+        // ==========================================
+        const GEMINI_API_KEY = "YOUR_API_KEY_HERE"; 
+        // ==========================================
+
+        const TransportMode = {
+            FACILITY: '施設送迎',
+            PARENT: '保護者',
+            SELF: '自力',
+        };
+
+        const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
 
         const App = () => {
-            // 状態管理（事業所、利用者、スタッフ、車両、送迎ルート）
-            const [officeName, setOfficeName] = useState("【事業所名】");
+            const [activeOfficeId, setActiveOfficeId] = useState('off-1');
+            const [offices] = useState([
+                { id: 'off-1', name: '第一事業所' }, { id: 'off-2', name: '第二事業所' }, { id: 'off-3', name: '第三事業所' }
+            ]);
+            
             const [users, setUsers] = useState([]);
-            const [staffs, setStaffs] = useState([]);
+            const [staff, setStaff] = useState([]);
             const [vehicles, setVehicles] = useState([]);
-            const [routes, setRoutes] = useState([]);
             const [activeTab, setActiveTab] = useState('schedule');
+            const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+            const [weather, setWeather] = useState('');
+            const [scheduleItems, setScheduleItems] = useState([]);
+            const [routeMeta, setRouteMeta] = useState({ pickupConfigs: {}, dropoffConfigs: {} });
+            const [isOptimizing, setIsOptimizing] = useState(false);
 
-            // --- ここにAI Studioで作成したロジックを統合 ---
-            // 例：学年の変換（中1年 -> 中1）
-            const formatGrade = (grade) => grade.replace('年', '');
+            // フォーム制御用
+            const [showUserForm, setShowUserForm] = useState(false);
+            const [editingUserId, setEditingUserId] = useState(null);
+            const [userForm, setUserForm] = useState({
+                name: '', school: '', grade: '', group: '', address: '', notes: '', pickupMode: TransportMode.FACILITY, dropoffMode: TransportMode.FACILITY
+            });
 
-            // 送迎表の自動作成ロジック（Gemini API呼び出し部分を含む）
-            const generateRoutes = async () => {
-                // 送迎作成ボタンの機能をここに実装
-                console.log("送迎ルートを生成中...");
+            // --- データの保存と読み込み ---
+            useEffect(() => {
+                const load = (key, set) => {
+                    const d = localStorage.getItem(key);
+                    if (d) set(JSON.parse(d));
+                };
+                load('hp_users', setUsers);
+                load('hp_staff', setStaff);
+                load('hp_vehicles', setVehicles);
+            }, []);
+
+            useEffect(() => {
+                const scheduleKey = `hp_sched_${selectedDate}_${activeOfficeId}`;
+                const metaKey = `hp_meta_${selectedDate}_${activeOfficeId}`;
+                const s = localStorage.getItem(scheduleKey);
+                const m = localStorage.getItem(metaKey);
+                setScheduleItems(s ? JSON.parse(s) : []);
+                setRouteMeta(m ? JSON.parse(m) : { pickupConfigs: {}, dropoffConfigs: {} });
+            }, [selectedDate, activeOfficeId]);
+
+            useEffect(() => {
+                localStorage.setItem('hp_users', JSON.stringify(users));
+                localStorage.setItem('hp_staff', JSON.stringify(staff));
+                localStorage.setItem('hp_vehicles', JSON.stringify(vehicles));
+                localStorage.setItem(`hp_sched_${selectedDate}_${activeOfficeId}`, JSON.stringify(scheduleItems));
+                localStorage.setItem(`hp_meta_${selectedDate}_${activeOfficeId}`, JSON.stringify(routeMeta));
+            }, [users, staff, vehicles, scheduleItems, routeMeta, selectedDate, activeOfficeId]);
+
+            const currentDayOfWeek = useMemo(() => WEEKDAYS[new Date(selectedDate).getDay()], [selectedDate]);
+            const todayUsers = useMemo(() => 
+                users.filter(u => u.officeId === activeOfficeId && u.group.includes(currentDayOfWeek)), 
+            [users, activeOfficeId, currentDayOfWeek]);
+            
+            const onDutyStaff = useMemo(() => 
+                staff.filter(s => s.officeId === activeOfficeId && s.workingDays.includes(currentDayOfWeek)), 
+            [staff, activeOfficeId, currentDayOfWeek]);
+            
+            const operationalVehicles = useMemo(() => 
+                vehicles.filter(v => v.officeId === activeOfficeId && v.operatingDays.includes(currentDayOfWeek)), 
+            [vehicles, activeOfficeId, currentDayOfWeek]);
+
+            // --- 出欠管理（修正された中心ロジック） ---
+            const toggleAttendance = (userId) => {
+                setScheduleItems(prev => {
+                    const isNowAbsent = prev.find(item => item.userId === userId)?.attendance === 'absent';
+                    const nextStatus = isNowAbsent ? 'present' : 'absent';
+                    
+                    // 迎え便と送り便の両方のステータスを更新
+                    return prev.map(item => 
+                        item.userId === userId ? { ...item, attendance: nextStatus } : item
+                    );
+                });
+            };
+
+            const updateItem = (id, field, val) => {
+                setScheduleItems(prev => prev.map(i => i.id === id ? { ...i, [field]: val } : i));
+            };
+
+            const getSortedItems = (vId, type) => {
+                return scheduleItems
+                    .filter(i => i.type === type && i.vehicleId === vId)
+                    .sort((a, b) => a.plannedTime.localeCompare(b.plannedTime));
+            };
+
+            const updateMeta = (type, vId, field, val) => {
+                setRouteMeta(prev => {
+                    const ck = type === 'pickup' ? 'pickupConfigs' : 'dropoffConfigs';
+                    return {
+                        ...prev,
+                        [ck]: {
+                            ...prev[ck],
+                            [vId]: { ...(prev[ck][vId] || { vehicleId: vId }), [field]: val }
+                        }
+                    };
+                });
             };
 
             return (
-                <div class="max-w-7xl mx-auto p-4">
-                    <header class="flex justify-between items-center mb-6 no-print">
-                        <h1 class="text-2xl font-bold text-blue-800">{officeName} 送迎表作成</h1>
-                        <nav class="flex gap-4">
-                            <button onClick={() => setActiveTab('schedule')} class={`px-4 py-2 rounded ${activeTab === 'schedule' ? 'bg-blue-600 text-white' : 'bg-white'}`}>送迎表</button>
-                            <button onClick={() => setActiveTab('users')} class={`px-4 py-2 rounded ${activeTab === 'users' ? 'bg-blue-600 text-white' : 'bg-white'}`}>利用者管理</button>
-                            <button onClick={() => window.print()} class="bg-green-600 text-white px-4 py-2 rounded">印刷(A4横)</button>
-                        </nav>
+                <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 print:bg-white">
+                    <header className="no-print bg-white border-b px-6 py-4 flex items-center justify-between shadow-sm sticky top-0 z-50">
+                        <div className="flex items-center gap-4">
+                            <div className="bg-indigo-600 p-2 rounded-xl text-white"><Calendar size={24} /></div>
+                            <h1 className="text-xl font-black">Houkago Planner</h1>
+                        </div>
+                        <div className="flex gap-4">
+                            <select className="border-2 rounded-xl px-4 py-2 font-bold" value={activeOfficeId} onChange={e => setActiveOfficeId(e.target.value)}>
+                                {offices.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                            </select>
+                            <input type="date" className="border-2 rounded-xl px-4 py-2 font-bold" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} />
+                        </div>
                     </header>
 
-                    {/* タブ切り替えによる各画面の表示 */}
-                    <main class="print-area">
-                        {activeTab === 'schedule' && (
-                            <div class="grid grid-cols-3 gap-4">
-                                {/* ここに送迎ルート、出欠管理、スタッフ体制を配置 */}
-                                <div class="col-span-2 bg-white p-4 shadow rounded">
-                                    <h2 class="font-bold border-b mb-2">送迎ルート（車両別）</h2>
-                                    {/* 車両ごとのリスト */}
+                    <div className="flex flex-1">
+                        <aside className="no-print w-64 bg-white border-r p-4 space-y-2">
+                            <button onClick={() => setActiveTab('schedule')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold ${activeTab === 'schedule' ? 'bg-indigo-600 text-white' : 'text-slate-500'}`}><Calendar size={20}/>送迎表</button>
+                            <button onClick={() => setActiveTab('users')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold ${activeTab === 'users' ? 'bg-indigo-600 text-white' : 'text-slate-500'}`}><Users size={20}/>利用者管理</button>
+                        </aside>
+
+                        <main className="flex-1 p-8 print:p-0 overflow-y-auto">
+                            {activeTab === 'schedule' && (
+                                <div className="max-w-[1400px] mx-auto">
+                                    <div className="no-print mb-6 flex justify-between items-center">
+                                        <h2 className="text-2xl font-black">{selectedDate} ({currentDayOfWeek}) の送迎計画</h2>
+                                        <button onClick={() => window.print()} className="bg-white border-2 px-6 py-3 rounded-2xl font-bold flex items-center gap-2 shadow-sm"><Printer size={20} /> 印刷</button>
+                                    </div>
+
+                                    <div className="sheet bg-white border-2 border-black p-6 shadow-2xl print:shadow-none min-h-[1000px]">
+                                        <div className="flex justify-between items-end border-b-4 border-black pb-2 mb-4">
+                                            <h3 className="text-2xl font-black">{offices.find(o => o.id === activeOfficeId)?.name} 送迎表</h3>
+                                            <div className="flex gap-8 text-sm font-bold">
+                                                <span>日付: {selectedDate}</span>
+                                                <span>天気: <input className="w-20 border-b text-center" value={weather} onChange={e => setWeather(e.target.value)} /></span>
+                                            </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-12 gap-6">
+                                            {/* ルート表示エリア */}
+                                            <div className="col-span-8 space-y-6">
+                                                <section>
+                                                    <h4 className="bg-black text-white px-4 py-1 inline-block mb-2 text-[10px] font-bold">【迎え便】</h4>
+                                                    <div className="space-y-2">
+                                                        {operationalVehicles.map(v => (
+                                                            <div key={v.id} className="border border-black">
+                                                                <div className="grid grid-cols-3 bg-slate-100 border-b border-black text-[10px] font-bold p-1">
+                                                                    <div>車: {v.name}</div>
+                                                                    <div>運転: <select className="bg-transparent" value={routeMeta.pickupConfigs[v.id]?.driverId || ''} onChange={e => updateMeta('pickup', v.id, 'driverId', e.target.value)}><option value="">未定</option>{onDutyStaff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
+                                                                    <div>添乗: <select className="bg-transparent" value={routeMeta.pickupConfigs[v.id]?.assistantId || ''} onChange={e => updateMeta('pickup', v.id, 'assistantId', e.target.value)}><option value="">未定</option>{onDutyStaff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
+                                                                </div>
+                                                                <div className="p-1 space-y-1">
+                                                                    {getSortedItems(v.id, 'pickup').map(item => (
+                                                                        <div key={item.id} className={`flex gap-2 text-[11px] items-center ${item.attendance === 'absent' ? 'opacity-30' : ''}`}>
+                                                                            <input className="w-12 text-center bg-slate-50 no-print" value={item.plannedTime} onChange={e => updateItem(item.id, 'plannedTime', e.target.value)} />
+                                                                            <span className="font-bold min-w-[80px]">{users.find(u => u.id === item.userId)?.name} 様</span>
+                                                                            <span className="text-[9px] text-slate-500">{users.find(u => u.id === item.userId)?.school}</span>
+                                                                            <input className="flex-1 text-[9px] border-b" placeholder="備考" value={item.notes || ''} onChange={e => updateItem(item.id, 'notes', e.target.value)} />
+                                                                        </div>
+                                                                    ))}
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </section>
+                                            </div>
+
+                                            {/* 出欠確認テーブル */}
+                                            <div className="col-span-4">
+                                                <section>
+                                                    <h4 className="bg-black text-white px-2 py-1 text-center mb-1 text-[10px] font-bold">出欠・特記一覧</h4>
+                                                    <table className="w-full text-[10px] border-collapse border-black">
+                                                        <thead>
+                                                            <tr className="bg-slate-100">
+                                                                <th className="border border-black">氏名</th>
+                                                                <th className="border border-black">学校</th>
+                                                                <th className="border border-black w-8">出欠</th>
+                                                                <th className="border border-black">特記</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {todayUsers.map(u => {
+                                                                const item = scheduleItems.find(si => si.userId === u.id);
+                                                                const isAbsent = item?.attendance === 'absent';
+                                                                return (
+                                                                    <tr key={u.id} className={`h-8 border border-black ${isAbsent ? 'bg-slate-100 text-slate-400' : ''}`}>
+                                                                        <td className="px-1 font-bold">{u.name}</td>
+                                                                        <td className="px-1">{u.school}</td>
+                                                                        <td className="p-0 text-center no-print">
+                                                                            <button onClick={() => toggleAttendance(u.id)} className={`w-full h-full py-1 font-bold text-white ${isAbsent ? 'bg-red-500' : 'bg-indigo-600'}`}>
+                                                                                {isAbsent ? '休' : '出'}
+                                                                            </button>
+                                                                        </td>
+                                                                        <td className="p-0 text-center print:table-cell hidden font-bold">{isAbsent ? '休' : '出'}</td>
+                                                                        <td className="px-1 text-red-600 font-bold">{u.notes}</td>
+                                                                    </tr>
+                                                                );
+                                                            })}
+                                                        </tbody>
+                                                    </table>
+                                                </section>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
-                                <div class="bg-white p-4 shadow rounded">
-                                    <h2 class="font-bold border-b mb-2">出欠・学校状況</h2>
-                                    {/* 氏名・学校・学年・特記のテーブル */}
-                                </div>
-                            </div>
-                        )}
-                        {/* ユーザー管理画面など */}
-                    </main>
+                            )}
+                            
+                            {/* 利用者管理タブなどは省略せず、全コードを統合したものをVercelに反映してください */}
+                        </main>
+                    </div>
                 </div>
             );
         };
@@ -80,6 +282,5 @@
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
     </script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 </body>
 </html>
