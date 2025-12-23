@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>SHOJIN 送迎管理 最終確定版</title>
+    <title>SHOJIN 送迎順・時間固定版</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { font-family: sans-serif; background: #f1f5f9; font-size: 11px; }
@@ -12,20 +12,16 @@
         table { border-collapse: collapse; width: 100%; border: 2px solid black; background: white; }
         th, td { border: 1px solid black; padding: 4px; font-weight: bold; text-align: center; }
         .day-on { background: #4f46e5 !important; color: white !important; }
-        input[type="text"] { width: 100%; border: none; text-align: center; font-size: 11px; background: transparent; }
-        input:focus { background: #fffde7; outline: 1px solid #4f46e5; }
-        .critical { color: red; font-weight: bold; }
+        input[type="text"], input[type="number"] { width: 100%; border: none; text-align: center; font-size: 11px; background: transparent; }
+        .critical { color: red; font-weight: bold; background: #fee2e2; }
         @media print { .no-print { display: none !important; } }
     </style>
 </head>
 <body class="min-h-screen flex flex-col">
 
 <script type="module">
-    import { GoogleGenerativeAI } from "https://esm.run/@google/generative-ai";
-
-    // データの保存（v50）
-    window.state = JSON.parse(localStorage.getItem('shojin_v50')) || {
-        apiKey: "",
+    // データの保存（v110）
+    window.state = JSON.parse(localStorage.getItem('shojin_v110')) || {
         curId: 'off1',
         off1: { name: "星の村", u:[], v:[], s:[], r:{} },
         off2: { name: "プリズム", u:[], v:[], s:[], r:{} },
@@ -33,21 +29,50 @@
     };
 
     window.save = () => {
-        localStorage.setItem('shojin_v50', JSON.stringify(window.state));
+        localStorage.setItem('shojin_v110', JSON.stringify(window.state));
         window.render();
     };
 
-    // APIキーの保存用
-    window.updateApiKey = (val) => { window.state.apiKey = val; window.save(); };
-
     const getDayStr = (d) => ["日","月","火","水","木","金","土"][new Date(d).getDay()];
-    const formatGrade = (g) => {
-        if (!g) return "";
-        const num = g.toString().match(/\d+/);
-        return (num && !g.includes("中") && !g.includes("高")) ? "小" + num[0] : g;
+
+    // ★【送迎順（No）】に基づいた自動振り分け
+    window.autoAssign = () => {
+        const date = document.getElementById('dateInput').value;
+        const cur = window.state[window.state.curId];
+        const day = getDayStr(date);
+        
+        const activeU = cur.u.filter(u => u.group.includes(day));
+        const activeV = cur.v.filter(v => v.days.includes(day));
+
+        if (!activeV.length) return alert("車両設定で稼働車両を登録してください。");
+        if (!activeU.length) return alert("本日の利用者が名簿に見つかりません。");
+
+        // 【重要】入力された「送迎順(No)」で並べ替え
+        activeU.sort((a, b) => (parseInt(a.order || 999) - parseInt(b.order || 999)));
+
+        cur.r[date] = { "迎え": {}, "送り": {} };
+        activeV.forEach(v => {
+            cur.r[date]["迎え"][v.name] = [];
+            cur.r[date]["送り"][v.name] = [];
+        });
+
+        activeU.forEach((user, index) => {
+            const vIndex = index % activeV.length;
+            const vName = activeV[vIndex].name;
+            
+            // ルート順に5分ずつ加算（目安）
+            const timeOffset = Math.floor(index / activeV.length) * 10;
+            const pickTime = `14:${(10 + timeOffset).toString().padStart(2, '0')}`;
+            const dropTime = `17:${(10 + timeOffset).toString().padStart(2, '0')}`;
+            
+            cur.r[date]["迎え"][vName].push({ time: pickTime, name: user.name });
+            cur.r[date]["送り"][vName].push({ time: dropTime, name: user.name });
+        });
+
+        window.save();
+        alert("設定された送迎順に沿って作成しました！");
     };
 
-    // CSV読み込み：漢字抽出
     window.handleCsv = (e) => {
         const file = e.target.files[0];
         const reader = new FileReader();
@@ -66,38 +91,13 @@
                     cur.u.push({
                         id: 'U' + Math.random().toString(36).substr(2, 9),
                         name: kanjiName, group: clean(c[1]), address: clean(c[2]), 
-                        school: clean(c[3]), grade: formatGrade(clean(c[4])), 
-                        alert: "", memo: ""
+                        school: clean(c[3]), grade: clean(c[4]), alert: "", memo: "", order: "999"
                     });
                 }
             });
-            alert("読み込み完了。名簿でアレルギー等を入力してください。");
             window.save();
         };
         reader.readAsText(file, 'Shift-JIS');
-    };
-
-    // AI送迎
-    window.runAI = async () => {
-        if (!window.state.apiKey) return alert("APIキーを入力してください。");
-        const date = document.getElementById('dateInput').value;
-        const cur = window.state[window.state.curId];
-        const day = getDayStr(date);
-        const activeU = cur.u.filter(u => u.group.includes(day));
-        const activeV = cur.v.filter(v => v.days.includes(day));
-
-        const btn = document.getElementById('aiBtn');
-        btn.innerText = "AI作成中...";
-        try {
-            const genAI = new GoogleGenerativeAI(window.state.apiKey);
-            const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-            const prompt = `${cur.name}の送迎。車両:${activeV.map(v=>v.name)}、利用者:${activeU.map(u=>u.name)}。必ずこの形式のJSONのみ回答:{"迎え":{"車名":[{"time":"14:00","name":"名前"}]},"送り":{"車名":[{"time":"17:00","name":"名前"}]}}`;
-            const result = await model.generateContent(prompt);
-            const jsonStr = result.response.text().match(/\{[\s\S]*\}/)[0];
-            cur.r[date] = JSON.parse(jsonStr);
-            window.save();
-        } catch (e) { alert("AIエラー。キーが無効か、回数制限です。"); }
-        btn.innerText = "AI送迎作成";
     };
 
     window.render = () => {
@@ -106,22 +106,18 @@
         const day = getDayStr(date);
         document.getElementById('officeTitle').innerText = cur.name;
         document.getElementById('officeSelect').value = window.state.curId;
-        document.getElementById('apiKeyInput').value = window.state.apiKey || "";
 
         const staffOpts = `<option value="">-</option>` + cur.s.filter(s=>s.days.includes(day)).map(s=>`<option value="${s.name}">${s.name}</option>`).join('');
 
         ['迎え', '送り'].forEach(type => {
             document.getElementById(type + 'Area').innerHTML = cur.v.filter(v => v.days.includes(day)).map(v => `
-                <div class="border-2 border-black mb-3">
+                <div class="border-2 border-black mb-3 bg-white">
                     <div class="bg-indigo-900 text-white p-1 text-[10px] flex justify-between items-center">
                         <span class="font-bold">${v.name}</span>
-                        <div class="flex gap-1">
-                            運:<select class="bg-white text-black rounded px-1">${staffOpts}</select>
-                            添:<select class="bg-white text-black rounded px-1">${staffOpts}</select>
-                        </div>
+                        <div class="flex gap-1">運:<select class="bg-white text-black rounded px-1">${staffOpts}</select>添:<select class="bg-white text-black rounded px-1">${staffOpts}</select></div>
                     </div>
                     <table class="w-full">
-                        ${(cur.r[date]?.[type]?.[v.name] || Array(6).fill({time:'',name:''})).map(row => `
+                        ${(cur.r[date]?.[type]?.[v.name] || Array(8).fill({time:'',name:''})).map(row => `
                             <tr class="h-7 border-b border-black">
                                 <td class="w-10 border-r bg-slate-50"><input type="text" value="${row.time||''}"></td>
                                 <td><input type="text" value="${row.name||''}" class="font-bold"></td>
@@ -132,30 +128,27 @@
             `).join('');
         });
 
-        // 重要事項表示ありのリスト
         document.getElementById('attendList').innerHTML = cur.u.filter(u => u.group.includes(day)).map(u => `
-            <tr class="h-9 border-b border-black text-[9px]">
+            <tr class="h-10 border-b border-black text-[9px]">
                 <td class="font-bold">${u.name}</td><td>${u.school||''}</td><td>${u.grade||''}</td>
-                <td class="text-left px-1">
-                    <div class="critical">${u.alert||''}</div>
-                    <input type="text" value="${u.memo||''}" placeholder="備考" onchange="window.updateField('${u.id}', 'memo', this.value)">
-                </td>
+                <td class="text-left px-1"><div class="text-red-600 font-bold">${u.alert||''}</div><input type="text" value="${u.memo||''}" onchange="window.updateField('${u.id}', 'memo', this.value)"></td>
             </tr>
         `).join('');
 
         document.getElementById('userTable').innerHTML = cur.u.map(u => `
             <tr class="border-b text-[10px]">
+                <td class="w-12 bg-yellow-50"><input type="number" value="${u.order||999}" onchange="window.updateField('${u.id}', 'order', this.value)" class="font-black text-blue-700"></td>
                 <td><input type="text" value="${u.name}" onchange="window.updateField('${u.id}', 'name', this.value)" class="font-bold"></td>
-                <td><input type="text" value="${u.address}" onchange="window.updateField('${u.id}', 'address', this.value)" class="text-left px-1"></td>
+                <td><input type="text" value="${u.address}" onchange="window.updateField('${u.id}', 'address', this.value)" class="text-left"></td>
                 <td><input type="text" value="${u.school}" onchange="window.updateField('${u.id}', 'school', this.value)"></td>
                 <td><input type="text" value="${u.grade}" onchange="window.updateField('${u.id}', 'grade', this.value)"></td>
-                <td class="bg-red-50"><input type="text" value="${u.alert||''}" placeholder="てんかん等" onchange="window.updateField('${u.id}', 'alert', this.value)" class="critical"></td>
-                <td><button onclick="window.delData('u', '${u.id}')" class="text-red-500 font-bold px-1">削除</button></td>
+                <td><input type="text" value="${u.alert||''}" onchange="window.updateField('${u.id}', 'alert', this.value)" class="critical"></td>
+                <td><button onclick="window.delData('u', '${u.id}')" class="text-red-500 font-bold">削除</button></td>
             </tr>
         `).join('');
 
         const drawCfg = (list, type) => list.map(item => `
-            <div class="flex items-center justify-between p-2 border-b bg-white mb-1 shadow-sm rounded">
+            <div class="flex items-center justify-between p-2 border-b bg-white mb-1">
                 <input type="text" value="${item.name}" class="font-bold w-20 text-left" onchange="window.renameCfg('${type}', '${item.id}', this.value)">
                 <div class="flex gap-1">
                     ${["月","火","水","木","金","土"].map(d => `<button onclick="window.toggleDay('${type}', '${item.id}', '${d}')" class="w-6 h-6 border rounded text-[9px] ${item.days.includes(d)?'day-on':'bg-white'}">${d}</button>`).join('')}
@@ -193,61 +186,5 @@
 
 <header class="bg-slate-900 text-white p-3 no-print flex justify-between items-center shadow-xl">
     <div class="flex items-center gap-4">
-        <h1 class="text-xl font-black text-orange-400 italic">SHOJIN SYSTEM</h1>
-        <select id="officeSelect" onchange="window.setOffice(this.value)" class="bg-white text-black font-bold p-1 rounded text-xs">
-            <option value="off1">星の村</option><option value="off2">プリズム</option><option value="off3">カラフル</option>
-        </select>
-        <input type="text" id="apiKeyInput" onchange="window.updateApiKey(this.value)" placeholder="APIキーを入力" class="w-32 bg-slate-700 text-white p-1 rounded text-[9px]">
-    </div>
-    <div class="flex gap-2">
-        <input type="date" id="dateInput" onchange="window.render()" class="text-black p-1 rounded font-bold">
-        <button id="aiBtn" onclick="window.runAI()" class="bg-orange-500 px-6 py-1 rounded-full font-black shadow-lg">AI作成</button>
-        <button onclick="window.print()" class="bg-blue-600 px-4 py-1 rounded-full font-bold">印刷</button>
-    </div>
-</header>
-
-<nav class="flex bg-slate-200 no-print border-b-2 border-slate-400">
-    <button id="scheduleBtn" onclick="window.setTab('schedule')" class="tab-btn active flex-1 py-3 text-xs">送迎計画表</button>
-    <button id="usersBtn" onclick="window.setTab('users')" class="tab-btn flex-1 py-3 text-xs">名簿・重要事項</button>
-    <button id="configBtn" onclick="window.setTab('config')" class="tab-btn flex-1 py-3 text-xs">職員・車両設定</button>
-</nav>
-
-<main class="p-4 flex-1 overflow-auto">
-    <div id="scheduleTab" class="tab-content active">
-        <div class="bg-white p-6 border-2 border-black max-w-5xl mx-auto shadow-2xl">
-            <div class="flex justify-between border-b-4 border-black mb-4">
-                <h2 id="officeTitle" class="text-2xl font-black underline">事業所</h2>
-                <div class="text-xl font-bold italic">送迎計画表</div>
-            </div>
-            <div class="grid grid-cols-12 gap-4">
-                <div class="col-span-8 space-y-4">
-                    <div><div class="font-black text-blue-900 underline text-xs">■ 迎え</div><div id="迎えArea" class="grid grid-cols-2 gap-2"></div></div>
-                    <div><div class="font-black text-red-900 underline text-xs">■ 送り</div><div id="送りArea" class="grid grid-cols-2 gap-2"></div></div>
-                </div>
-                <div class="col-span-4 border-2 border-black p-1 bg-yellow-50">
-                    <div class="text-center font-black bg-black text-white text-[9px] py-1 mb-1">出欠・重要事項</div>
-                    <table class="w-full"><thead><tr class="bg-slate-300 text-[8px]"><th>氏名</th><th>学校</th><th>学年</th><th>重要/備考</th></tr></thead><tbody id="attendList"></tbody></table>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <div id="usersTab" class="tab-content">
-        <div class="bg-white p-6 border-2 border-black rounded-xl shadow-lg">
-            <div class="flex justify-between mb-4 items-center">
-                <h2 class="text-xl font-black italic">名簿・アレルギー情報管理</h2>
-                <label class="bg-green-700 text-white px-6 py-2 rounded-full font-black cursor-pointer text-xs">CSV読込<input type="file" onchange="window.handleCsv(event)" class="hidden"></label>
-            </div>
-            <table class="w-full"><thead><tr class="bg-slate-100"><th>名前</th><th>住所</th><th>学校</th><th>学年</th><th class="text-red-600">アレルギー・てんかん</th><th>操作</th></tr></thead><tbody id="userTable"></tbody></table>
-        </div>
-    </div>
-
-    <div id="configTab" class="tab-content">
-        <div class="grid grid-cols-2 gap-8 max-w-4xl mx-auto">
-            <div class="bg-slate-100 p-6 border-2 border-black rounded-xl shadow-md"><h3 class="font-black mb-4">職員 (運転/添乗)</h3><div id="staffList" class="mb-4"></div><button onclick="window.addCfg('s')" class="w-full bg-indigo-900 text-white py-2 rounded font-bold">+ 追加</button></div>
-            <div class="bg-slate-100 p-6 border-2 border-black rounded-xl shadow-md"><h3 class="font-black mb-4">車両 (稼働日)</h3><div id="vehicleList" class="mb-4"></div><button onclick="window.addCfg('v')" class="w-full bg-orange-600 text-white py-2 rounded font-bold">+ 追加</button></div>
-        </div>
-    </div>
-</main>
-</body>
-</html>
+        <h1 class="text-xl font-black text-blue-400">SHOJIN SYSTEM</h1>
+        <select id="officeSelect" onchange="window.setOffice
