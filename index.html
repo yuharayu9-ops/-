@@ -2,31 +2,37 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>SHOJIN 運行管理システム v1.9</title>
+    <title>SHOJIN 運行管理 v2.0</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        body { font-family: "Helvetica Neue", Arial, sans-serif; background: #f1f5f9; font-size: 11px; }
+        body { font-family: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif; background: #f8fafc; font-size: 11px; }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
-        .tab-btn.active { border-bottom: 4px solid #1e40af; color: #1e40af; font-weight: bold; background: white; }
+        .tab-btn.active { border-bottom: 4px solid #2563eb; color: #2563eb; font-weight: bold; background: white; }
         table { border-collapse: collapse; width: 100%; border: 1.5px solid black; background: white; }
-        th, td { border: 1px solid black; padding: 3px; text-align: center; }
-        .day-on { background: #1e40af !important; color: white !important; }
-        input[type="text"], input[type="number"], select { width: 100%; border: none; font-size: 11px; background: transparent; text-align: center; }
-        .critical { color: red; font-weight: bold; background: #fee2e2; }
+        th, td { border: 1px solid black; padding: 4px; text-align: center; }
+        .day-on { background: #2563eb !important; color: white !important; }
+        input[type="text"], input[type="number"], select { width: 100%; border: none; font-size: 12px; background: transparent; text-align: center; }
+        .critical { color: #dc2626; font-weight: bold; background: #fef2f2; }
         @media print { .no-print { display: none !important; } body { background: white; } .max-w-5xl { width: 100%; max-width: none; border:none; shadow:none; } }
     </style>
 </head>
 <body class="min-h-screen flex flex-col">
 
 <script type="module">
-    const STORAGE_KEY = 'shojin_v190';
+    // バージョン衝突回避のため、新しい保存キーを使用
+    const STORAGE_KEY = 'shojin_v200_final';
     const initData = {
         curId: 'off1',
         off1: { name: "星の村", u:[], v:[], s:[], r:{} }
     };
 
-    window.state = JSON.parse(localStorage.getItem(STORAGE_KEY)) || initData;
+    // 読み込みエラー対策
+    try {
+        window.state = JSON.parse(localStorage.getItem(STORAGE_KEY)) || initData;
+    } catch(e) {
+        window.state = initData;
+    }
 
     window.save = () => {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(window.state));
@@ -35,7 +41,7 @@
 
     const getDayStr = (d) => ["日","月","火","水","木","金","土"][new Date(d).getDay()];
 
-    // CSV読込の抜本修正
+    // CSV読込の修正：No列が「1〜99」の数字である行以外は完全に無視する
     window.handleCsv = (e) => {
         const file = e.target.files[0];
         if (!file) return;
@@ -43,26 +49,32 @@
         reader.onload = (ev) => {
             const lines = ev.target.result.split(/\r\n|\n/);
             const cur = window.state[window.state.curId];
-            cur.u = []; // 重複を防ぐため一旦クリア
+            cur.u = []; 
             let count = 0;
+
             lines.forEach(line => {
+                if (!line.trim()) return;
+                // カンマ区切り。引用符内のカンマは無視
                 const c = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(s => s.replace(/^"|"$/g, '').trim());
-                // 1列目が数字（No.1, 2...）の行だけを拾う。それ以外（ひらがな曜日等）は無視
-                if (c[0] && /^\d+$/.test(c[0])) {
+                
+                // 1列目（No）が「純粋な数字」の場合のみデータとして認める
+                // これにより「月曜」「火曜」などのひらがな行を100%排除します
+                if (c[0] && /^[0-9]+$/.test(c[0])) {
                     cur.u.push({
                         id: 'U' + Math.random().toString(36).substr(2, 9),
                         order: c[0],           // No
                         name: c[1] || "",      // 氏名
                         school: c[2] || "",    // 学校
                         grade: c[3] || "",     // 学年
-                        alert: (c[5] || "") + (c[6] ? " " + c[6] : ""), // アレルギー・理由
+                        alert: (c[5] || "") + (c[6] ? " " + c[6] : ""), // アレルギー・重要事項
                         group: "月火水木金土" 
                     });
                     count++;
                 }
             });
             window.save();
-            alert(count + "名の利用者を読み込みました。ひらがなの行は除外されました。");
+            alert(count + "名の利用者を読み込みました。不要な行（ひらがな等）はすべて除外しました。");
+            window.setTab('users');
         };
         reader.readAsText(file, 'Shift-JIS');
     };
@@ -74,7 +86,7 @@
         const activeV = cur.v.filter(v => v.days.includes(day));
         const activeU = cur.u.filter(u => u.group.includes(day));
 
-        if (!activeV.length) return alert("車両設定で、今日稼働する車にチェックを入れてください。");
+        if (!activeV.length) return alert("「車両設定」で今日稼働する車にチェックを入れてください。");
         activeU.sort((a, b) => (parseInt(a.order) - parseInt(b.order)));
 
         cur.r[date] = { "迎え": {}, "送り": {} };
@@ -93,96 +105,44 @@
         const date = document.getElementById('dateInput').value;
         const day = getDayStr(date);
         
-        // 出勤スタッフ（曜日一致）
         const staffOpts = `<option value="">-未選択-</option>` + cur.s.filter(s=>s.days.includes(day)).map(s=>`<option value="${s.name}">${s.name}</option>`).join('');
 
-        // 送迎ルート
         ['迎え', '送り'].forEach(type => {
             const area = document.getElementById(type + 'Area');
-            const vehicles = cur.v.filter(v => v.days.includes(day));
-            area.innerHTML = vehicles.map(v => `
-                <div class="mb-4 border-[1.5px] border-black">
+            const activeVehicles = cur.v.filter(v => v.days.includes(day));
+            area.innerHTML = activeVehicles.length ? activeVehicles.map(v => `
+                <div class="mb-4 border-2 border-black shadow-sm">
                     <table class="w-full bg-slate-50">
-                        <tr class="h-8">
-                            <td class="w-12 bg-black text-white font-bold">運転</td>
-                            <td class="w-24 border-r-2 border-black"><select class="font-bold">${staffOpts}</select></td>
-                            <td class="w-12 bg-gray-700 text-white italic">車名</td>
-                            <td class="font-black text-blue-900 bg-white text-[12px]">${v.name}</td>
+                        <tr class="h-9">
+                            <td class="w-12 bg-slate-800 text-white font-bold">運転</td>
+                            <td class="w-28 border-r-2 border-black"><select class="font-bold">${staffOpts}</select></td>
+                            <td class="w-12 bg-slate-600 text-white italic">車名</td>
+                            <td class="font-black text-blue-700 bg-white text-sm">${v.name}</td>
                         </tr>
-                        <tr class="h-8 border-t border-black">
-                            <td class="bg-gray-800 text-white font-bold">添乗</td>
+                        <tr class="h-9 border-t border-black">
+                            <td class="bg-slate-700 text-white font-bold">添乗</td>
                             <td class="border-r-2 border-black"><select class="font-bold">${staffOpts}</select></td>
-                            <td class="bg-gray-200">種別</td>
+                            <td class="bg-slate-200 font-bold">種別</td>
                             <td class="bg-white">${type}</td>
                         </tr>
                     </table>
                     <table class="w-full border-t border-black">
-                        <thead><tr class="bg-gray-100 text-[9px] h-5"><th>時刻</th><th>利用者氏名</th></tr></thead>
-                        ${(cur.r[date]?.[type]?.[v.name] || Array(7).fill({time:'',name:''})).map(row => `
-                            <tr class="h-8 border-t border-gray-400">
-                                <td class="w-14 border-r bg-white font-bold"><input type="text" value="${row.time}"></td>
-                                <td class="text-left px-3 bg-white font-black text-[13px]"><input type="text" value="${row.name}"></td>
+                        ${(cur.r[date]?.[type]?.[v.name] || Array(8).fill({time:'',name:''})).map(row => `
+                            <tr class="h-9 border-t border-gray-300">
+                                <td class="w-16 border-r bg-white font-bold"><input type="text" value="${row.time}"></td>
+                                <td class="text-left px-4 bg-white font-black text-[13px]"><input type="text" value="${row.name}"></td>
                             </tr>
                         `).join('')}
                     </table>
                 </div>
-            `).join('');
+            `).join('') : '<p class="text-gray-400 text-center py-4">車両が設定されていません</p>';
         });
 
-        // 重要事項確認リスト
         document.getElementById('attendList').innerHTML = cur.u.filter(u => u.group.includes(day)).map(u => `
-            <tr class="h-10 text-[10px] border-b border-gray-400">
-                <td class="font-black">${u.name}</td>
+            <tr class="h-11 text-[10px] border-b border-gray-400">
+                <td class="font-black text-[11px]">${u.name}</td>
                 <td class="text-[9px]">${u.school}</td>
                 <td class="w-8 font-bold">${u.grade}</td>
-                <td class="text-left px-1 text-red-600 font-bold leading-tight">${u.alert||''}</td>
+                <td class="text-left px-2 text-red-600 font-bold leading-tight">${u.alert||''}</td>
             </tr>
         `).join('');
-
-        // 名簿
-        document.getElementById('userTable').innerHTML = cur.u.map(u => `
-            <tr>
-                <td><input type="number" value="${u.order}" onchange="window.upd('u','${u.id}','order',this.value)"></td>
-                <td><input type="text" value="${u.name}" onchange="window.upd('u','${u.id}','name',this.value)" class="font-bold"></td>
-                <td><input type="text" value="${u.grade}" onchange="window.upd('u','${u.id}','grade',this.value)"></td>
-                <td><input type="text" value="${u.school}" onchange="window.upd('u','${u.id}','school',this.value)"></td>
-                <td><input type="text" value="${u.alert}" onchange="window.upd('u','${u.id}','alert',this.value)" class="critical text-left px-2"></td>
-                <td><button onclick="window.del('u','${u.id}')" class="text-red-500">削除</button></td>
-            </tr>
-        `).join('');
-
-        const drawCfg = (list, type) => list.map(item => `
-            <div class="flex items-center justify-between p-2 border-b bg-white mb-1">
-                <input type="text" value="${item.name}" class="font-bold w-32 text-left" onchange="window.upd('${type}','${item.id}','name',this.value)">
-                <div class="flex gap-1">
-                    ${["月","火","水","木","金","土"].map(d => `<button onclick="window.toggleDay('${type}','${item.id}','${d}')" class="w-7 h-7 border rounded text-[10px] ${item.days.includes(d)?'day-on':'bg-slate-50'}">${d}</button>`).join('')}
-                    <button onclick="window.del('${type}','${item.id}')" class="ml-2 text-red-400">×</button>
-                </div>
-            </div>
-        `).join('');
-        document.getElementById('staffList').innerHTML = drawCfg(cur.s, 's');
-        document.getElementById('vehicleList').innerHTML = drawCfg(cur.v, 'v');
-    };
-
-    window.upd = (type, id, prop, val) => { const item = window.state[window.state.curId][type].find(x => x.id === id); if(item) { item[prop] = val; window.save(); } };
-    window.toggleDay = (type, id, d) => { const item = window.state[window.state.curId][type].find(x => x.id === id); item.days = item.days.includes(d) ? item.days.filter(x => x !== d) : [...item.days, d]; window.save(); };
-    window.add = (type) => { const n = prompt("名前を入力"); if(n) { window.state[window.state.curId][type].push({id:'ID'+Date.now(), name:n, days:[], order:999}); window.save(); } };
-    window.del = (type, id) => { if(confirm("消去しますか？")) { window.state[window.state.curId][type] = window.state[window.state.curId][type].filter(x => x.id !== id); window.save(); } };
-    window.setTab = (t) => { document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active')); document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active')); document.getElementById(t+'Tab').classList.add('active'); document.getElementById(t+'Btn').classList.add('active'); };
-    
-    document.addEventListener('DOMContentLoaded', () => {
-        document.getElementById('dateInput').value = new Date().toISOString().split('T')[0];
-        window.render();
-    });
-</script>
-
-<header class="bg-slate-900 text-white p-3 no-print flex justify-between items-center shadow-lg">
-    <div class="flex items-center gap-4">
-        <h1 class="text-xl font-black italic text-indigo-400">SHOJIN SYSTEM v1.9</h1>
-    </div>
-    <div class="flex gap-2">
-        <input type="date" id="dateInput" onchange="window.render()" class="text-black p-1 rounded font-bold text-xs">
-        <button onclick="window.autoAssign()" class="bg-orange-600 px-6 py-2 rounded-full font-black text-white shadow-lg">一括作成</button>
-        <button onclick="window.print()" class="bg-indigo-600 px-4 py-2 rounded-full font-bold">印刷</button>
-    </div>
-</header>
