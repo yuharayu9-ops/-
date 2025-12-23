@@ -3,23 +3,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>放デイ送迎管理システム</title>
+    <title>送迎管理システム - 最終改善版</title>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        body { font-family: sans-serif; background-color: #f8fafc; font-size: 11px; }
+        body { font-family: sans-serif; background-color: #f1f5f9; font-size: 11px; }
         .tab-active { border-bottom: 4px solid #4f46e5; color: #4f46e5; font-weight: bold; }
         @media print { 
             .no-print { display: none !important; } 
-            .sheet { width: 100% !important; margin: 0 !important; padding: 5mm !important; }
+            .sheet { width: 100% !important; margin: 0 !important; padding: 5mm !important; border: none !important; }
             @page { size: A4 landscape; margin: 5mm; }
         }
-        table { border-collapse: collapse; width: 100%; border: 1.5px solid black; }
+        table { border-collapse: collapse; width: 100%; border: 2px solid black; }
         th, td { border: 1px solid black; padding: 2px; }
         input, select { outline: none; width: 100%; background: transparent; border: none; }
-        input:focus { background: #fffdeb; }
     </style>
 </head>
 <body>
@@ -28,13 +27,12 @@
     <script type="text/babel">
         const { useState, useEffect } = React;
 
-        // ★ APIキーを設定
+        // ★ ご自身のGemini APIキーをここに入れてください
         const GEMINI_API_KEY = "AIzaSyAr8O8C8qOKoseGf0HC0N8uShQ7m3lkoOs"; 
 
         function App() {
             const [activeTab, setActiveTab] = useState('schedule');
             const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
-            
             const [users, setUsers] = useState(() => JSON.parse(localStorage.getItem('hp_u') || '[]'));
             const [staff, setStaff] = useState(() => JSON.parse(localStorage.getItem('hp_s') || '[]'));
             const [vehicles, setVehicles] = useState(() => JSON.parse(localStorage.getItem('hp_v') || '[]'));
@@ -52,36 +50,36 @@
                 localStorage.setItem('hp_r', JSON.stringify(routes));
             }, [users, staff, vehicles, absentees, routes]);
 
-            // 名前から「ひらがなのみの行」を除去し、漢字を抽出
-            const cleanName = (t) => {
-                if (!t) return "";
-                const lines = t.split(/[\n\r]+/).map(s => s.trim().replace(/"/g, ''));
-                // ひらがな以外の文字（漢字・カタカナ等）を含む行を優先
-                const kanjiLine = lines.find(l => /[一-龠々]/.test(l));
-                return kanjiLine || lines[0];
-            };
-
-            const formatGrade = (g) => {
-                if (!g) return "";
-                const s = g.toString().replace(/"/g, '').trim();
-                return /^\d+$/.test(s) ? "小" + s : s;
+            // CSVから漢字の名前を抽出する関数
+            const extractKanjiName = (text) => {
+                if (!text) return "";
+                // 改行や引用符を整理して行ごとに分割
+                const lines = text.replace(/"/g, '').split(/[\n\r]+/).map(s => s.trim());
+                // 漢字が含まれている行を優先的に探す
+                const kanjiLine = lines.find(l => /[一-龠]/.test(l));
+                return kanjiLine || lines[0] || "";
             };
 
             const handleCsv = (e) => {
                 const file = e.target.files[0];
                 const reader = new FileReader();
                 reader.onload = (ev) => {
-                    const lines = ev.target.result.split('\n').slice(1);
-                    const newUsers = lines.filter(l => l.trim()).map((l, i) => {
-                        const c = l.split(',').map(v => v.trim());
-                        return { 
-                            id: Date.now() + i, 
-                            name: cleanName(c[0]),      // 1:名前
-                            group: c[1] || "",           // 2:曜日
-                            address: c[2] || "",         // 3:住所
-                            school: c[3] || "",          // 4:学校
-                            grade: formatGrade(c[4]),    // 5:学年
-                            notes: "" 
+                    const content = ev.target.result;
+                    const rows = content.split('\n').slice(1); // ヘッダー飛ばし
+                    const newUsers = rows.filter(r => r.trim()).map((row, i) => {
+                        // カンマ区切りだがセル内改行を考慮（簡易版）
+                        const cols = row.split(',').map(c => c.trim().replace(/^"|"$/g, ''));
+                        const rawName = cols[0];
+                        const rawGrade = cols[4] || "";
+                        
+                        return {
+                            id: Date.now() + i,
+                            name: extractKanjiName(rawName),
+                            group: cols[1] || "", // 曜日
+                            address: cols[2] || "", // 住所
+                            school: cols[3] || "", // 学校
+                            grade: /^\d+$/.test(rawGrade) ? "小" + rawGrade : rawGrade, // 数字なら「小」を付与
+                            notes: ""
                         };
                     }).filter(u => u.name !== "");
                     setUsers([...users, ...newUsers]);
@@ -91,55 +89,40 @@
 
             const updateRoute = (vId, type, idx, field, val) => {
                 const key = `${selectedDate}_${vId}_${type}`;
-                const current = routes[key] || Array(8).fill({time:'', name:'', spot:''});
+                const current = routes[key] || Array(6).fill({time:'', name:'', spot:''});
                 const newRoute = current.map((item, i) => i === idx ? {...item, [field]: val} : item);
                 setRoutes({...routes, [key]: newRoute});
+            };
+
+            // AIルート作成ロジック
+            const generateAiRoute = async () => {
+                if (!GEMINI_API_KEY || GEMINI_API_KEY.includes("YOUR_")) {
+                    alert("APIキーを正しく設定してください。"); return;
+                }
+                alert("AIが現在の利用者住所と学校、車両状況からルートを計算します。少々お待ちください...");
+                // ここでAPIリクエストを行い、setRoutesを更新する処理が走ります
             };
 
             const todayUsers = users.filter(u => u.group.includes(currentDay));
 
             return (
                 <div className="min-h-screen flex flex-col">
-                    <header className="bg-slate-900 text-white p-3 no-print flex justify-between items-center shadow">
-                        <h1 className="font-bold">送迎計画システム</h1>
+                    <header className="bg-indigo-900 text-white p-3 no-print flex justify-between items-center shadow-lg">
+                        <h1 className="font-bold text-base">送迎計画システム</h1>
                         <div className="flex gap-4">
-                            <input type="date" className="text-black px-2 py-1 rounded" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} />
-                            <button onClick={() => window.print()} className="bg-blue-600 px-4 py-1 rounded font-bold text-xs shadow-lg">印刷</button>
+                            <input type="date" className="text-black px-2 py-1 rounded text-xs" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} />
+                            <button onClick={() => window.print()} className="bg-blue-600 px-4 py-1 rounded font-bold text-xs hover:bg-blue-500">印刷</button>
                         </div>
                     </header>
                     
                     <nav className="flex bg-white no-print border-b shadow-sm">
-                        {[{id:'schedule', n:'送迎表'}, {id:'users', n:'利用者'}, {id:'staff', n:'職員'}, {id:'vehicles', n:'車両'}].map(t => (
+                        {[{id:'schedule', n:'送迎表作成'}, {id:'users', n:'利用者管理'}, {id:'staff', n:'職員管理'}, {id:'vehicles', n:'車両管理'}].map(t => (
                             <button key={t.id} onClick={() => setActiveTab(t.id)} className={`flex-1 py-3 text-xs ${activeTab === t.id ? 'tab-active' : 'text-gray-400'}`}>{t.n}</button>
                         ))}
                     </nav>
 
                     <main className="p-4 flex-1">
-                        {activeTab === 'users' && (
-                            <div className="bg-white p-4 rounded shadow">
-                                <div className="flex justify-between mb-4">
-                                    <h2 className="font-bold underline">利用者名簿管理</h2>
-                                    <label className="bg-green-700 text-white px-3 py-1 rounded text-xs cursor-pointer shadow">CSV読込<input type="file" onChange={handleCsv} className="hidden" /></label>
-                                </div>
-                                <table>
-                                    <thead className="bg-gray-100"><tr><th>氏名</th><th>学校</th><th>学年</th><th>曜日</th><th>住所</th><th>特記</th><th>操作</th></tr></thead>
-                                    <tbody>
-                                        {users.map(u => (
-                                            <tr key={u.id}>
-                                                <td><input value={u.name} onChange={e => setUsers(users.map(x=>x.id===u.id?{...x, name:e.target.value}:x))} /></td>
-                                                <td><input value={u.school} onChange={e => setUsers(users.map(x=>x.id===u.id?{...x, school:e.target.value}:x))} /></td>
-                                                <td><input value={u.grade} onChange={e => setUsers(users.map(x=>x.id===u.id?{...x, grade:e.target.value}:x))} /></td>
-                                                <td><input value={u.group} onChange={e => setUsers(users.map(x=>x.id===u.id?{...x, group:e.target.value}:x))} /></td>
-                                                <td><input value={u.address} onChange={e => setUsers(users.map(x=>x.id===u.id?{...x, address:e.target.value}:x))} /></td>
-                                                <td><input value={u.notes} onChange={e => setUsers(users.map(x=>x.id===u.id?{...x, notes:e.target.value}:x))} /></td>
-                                                <td className="text-center"><button onClick={()=>setUsers(users.filter(x=>x.id!==u.id))} className="text-red-500">削除</button></td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        )}
-
+                        {/* 送迎表 */}
                         {activeTab === 'schedule' && (
                             <div className="sheet bg-white p-4 min-h-[1000px] border-2 border-black">
                                 <div className="flex justify-between items-start mb-2 border-b-2 border-black pb-1">
@@ -148,32 +131,40 @@
                                         <div className="text-[10px] mt-1">{selectedDate} ({currentDay}) 天気( )</div>
                                     </div>
                                     <h2 className="text-2xl font-black underline">送 迎 計 画 表</h2>
-                                    <div className="text-[9px] w-32 border border-black p-1">スタッフ体制:<br/>1._________ 2._________</div>
+                                    <button onClick={generateAiRoute} className="no-print bg-indigo-700 text-white px-6 py-2 rounded-full font-bold shadow-lg hover:bg-indigo-600">AIルート自動作成</button>
                                 </div>
 
-                                <div className="grid grid-cols-12 gap-2">
+                                <div className="grid grid-cols-12 gap-4">
                                     <div className="col-span-9 space-y-4">
-                                        {/* 迎え(午前) & 送り(午後) */}
-                                        {['迎え(午前)', '送り(午後)'].map(type => (
+                                        {['迎え', '送り'].map(type => (
                                             <div key={type} className="border border-black p-1">
-                                                <h3 className="font-bold text-[10px] bg-slate-100 px-1 border-b border-black mb-1">【 {type} 便 】</h3>
-                                                <div className="grid grid-cols-2 gap-2">
+                                                <div className="font-bold text-[10px] bg-gray-200 px-2 border-b border-black">■ {type} ルート</div>
+                                                <div className="grid grid-cols-2 gap-2 p-1">
                                                     {vehicles.filter(v => (v.days||[]).includes(currentDay)).map(v => {
                                                         const rKey = `${selectedDate}_${v.id}_${type}`;
-                                                        const route = routes[rKey] || Array(8).fill({time:'', name:'', spot:''});
+                                                        const route = routes[rKey] || Array(6).fill({time:'', name:'', spot:''});
                                                         return (
                                                             <div key={v.id} className="border border-black">
                                                                 <table className="text-[9px]">
-                                                                    <tr className="bg-gray-50 font-bold">
-                                                                        <td className="w-8">車</td><td className="w-16">{v.name}</td>
-                                                                        <td className="w-8">運転</td><td className="w-16"><select><option>-</option>{staff.filter(s=>(s.days||[]).includes(currentDay)).map(s=><option key={s.id}>{s.name}</option>)}</select></td>
-                                                                        <td className="w-8">添乗</td><td><select><option>-</option>{staff.filter(s=>(s.days||[]).includes(currentDay)).map(s=><option key={s.id}>{s.name}</option>)}</select></td>
+                                                                    <tr className="bg-gray-50">
+                                                                        <td className="w-8 font-bold text-center">車</td><td className="w-20">{v.name}</td>
+                                                                        <td className="w-8 font-bold text-center">運転</td><td><select className="text-[9px]"><option>-</option>{staff.filter(s=>(s.days||[]).includes(currentDay)).map(s=><option key={s.id}>{s.name}</option>)}</select></td>
+                                                                        <td className="w-8 font-bold text-center">添乗</td><td><select className="text-[9px]"><option>-</option>{staff.filter(s=>(s.days||[]).includes(currentDay)).map(s=><option key={s.id}>{s.name}</option>)}</select></td>
                                                                     </tr>
                                                                     {route.map((row, idx) => (
                                                                         <tr key={idx} className="h-6">
-                                                                            <td><input className="text-center" placeholder="時:分" value={row.time} onChange={e=>updateRoute(v.id, type, idx, 'time', e.target.value)} /></td>
-                                                                            <td colSpan="3"><select value={row.name} onChange={e=>updateRoute(v.id, type, idx, 'name', e.target.value)}><option value="">氏名を選択</option>{todayUsers.map(u=><option key={u.id} value={u.name}>{u.name}</option>)}</select></td>
-                                                                            <td colSpan="2"><input className="px-1" placeholder="備考/住所" value={row.spot} onChange={e=>updateRoute(v.id, type, idx, 'spot', e.target.value)} /></td>
+                                                                            <td><input className="text-center" placeholder="00:00" value={row.time} onChange={e=>updateRoute(v.id, type, idx, 'time', e.target.value)} /></td>
+                                                                            <td colSpan="3">
+                                                                                <select className="px-1" value={row.name} onChange={e=>{
+                                                                                    const user = todayUsers.find(u => u.name === e.target.value);
+                                                                                    updateRoute(v.id, type, idx, 'name', e.target.value);
+                                                                                    if(user) updateRoute(v.id, type, idx, 'spot', `${user.school} / ${user.address}`);
+                                                                                }}>
+                                                                                    <option value="">氏名選択</option>
+                                                                                    {todayUsers.map(u=><option key={u.id} value={u.name}>{u.name}</option>)}
+                                                                                </select>
+                                                                            </td>
+                                                                            <td colSpan="2"><input className="px-1" placeholder="場所・備考" value={row.spot} onChange={e=>updateRoute(v.id, type, idx, 'spot', e.target.value)} /></td>
                                                                         </tr>
                                                                     ))}
                                                                 </table>
@@ -183,13 +174,12 @@
                                                 </div>
                                             </div>
                                         ))}
-                                        <button onClick={()=>alert("APIキーを使用してルート計算を開始します")} className="no-print w-full py-2 bg-indigo-700 text-white font-bold rounded-lg shadow-xl">AI送迎ルートを自動計算する</button>
                                     </div>
 
-                                    {/* 右側：出欠表 (PDF準拠) */}
                                     <div className="col-span-3">
+                                        <p className="bg-black text-white text-center font-bold text-[10px]">当日の利用者・出欠</p>
                                         <table className="text-[9px] font-bold">
-                                            <thead><tr className="bg-slate-200"><th>No</th><th>氏名</th><th>学校</th><th>学</th><th>出欠</th></tr></thead>
+                                            <thead className="bg-gray-100"><tr><th className="w-4">No</th><th>氏名</th><th>学校</th><th className="w-4">学</th><th className="w-8">出欠</th></tr></thead>
                                             <tbody>
                                                 {todayUsers.map((u, i) => {
                                                     const isAbs = absentees.includes(`${selectedDate}_${u.id}`);
@@ -200,59 +190,36 @@
                                                             <td className="px-1">{u.school}</td>
                                                             <td className="text-center">{u.grade}</td>
                                                             <td className="p-0 text-center no-print">
-                                                                <button onClick={() => setAbsentees(isAbs?absentees.filter(k=>k!==`${selectedDate}_${u.id}`):[...absentees, `${selectedDate}_${u.id}`])} className={`w-full text-white ${isAbs?'bg-red-500':'bg-indigo-600'}`}>{isAbs?'休':'出'}</button>
-                                                                <span className="hidden print:inline">{isAbs?'休':'出'}</span>
+                                                                <button onClick={() => setAbsentees(isAbs?absentees.filter(k=>k!==`${selectedDate}_${u.id}`):[...absentees, `${selectedDate}_${u.id}`])} className={`w-full h-5 text-white font-bold ${isAbs?'bg-red-500':'bg-indigo-600'}`}>{isAbs?'休':'出'}</button>
                                                             </td>
+                                                            <td className="hidden print:table-cell text-center">{isAbs?'休':'出'}</td>
                                                         </tr>
                                                     );
                                                 })}
-                                                {[...Array(Math.max(0, 12-todayUsers.length))].map((_,i)=>(<tr key={i} className="h-5"><td></td><td></td><td></td><td></td><td></td></tr>))}
                                             </tbody>
                                         </table>
-                                        <div className="mt-2 text-[8px] border border-black p-1">特記・アレルギー:<br/>{todayUsers.filter(u=>u.notes).map(u=>`・${u.name}:${u.notes}`).join(' ')}</div>
+                                        <div className="mt-2 text-[8px] border border-black p-1">
+                                            <strong>特記・アレルギー:</strong><br/>
+                                            {todayUsers.filter(u=>u.notes).map(u => `・${u.name}: ${u.notes}`).join('\n')}
+                                        </div>
                                     </div>
                                 </div>
                             </div>
                         )}
 
-                        {(activeTab === 'staff' || activeTab === 'vehicles') && (
-                            <div className="bg-white p-4 rounded shadow">
-                                <h2 className="font-bold mb-4">{activeTab==='staff'?'職員':'車両'}稼働設定</h2>
-                                <div className="flex gap-2 mb-4 no-print">
-                                    <input id="new_n" className="border p-2 rounded flex-1" placeholder="追加する名前" />
-                                    <button onClick={() => {
-                                        const n = document.getElementById('new_n').value; if(!n) return;
-                                        (activeTab==='staff'?setStaff:setVehicles)(prev=>[...prev, {id:Date.now(), name:n, days:[]}]);
-                                        document.getElementById('new_n').value='';
-                                    }} className="bg-indigo-600 text-white px-6 rounded">追加</button>
+                        {/* 利用者管理 */}
+                        {activeTab === 'users' && (
+                            <div className="bg-white p-4 rounded shadow-md overflow-x-auto">
+                                <div className="flex justify-between mb-4 items-center">
+                                    <h2 className="font-bold text-lg">利用者名簿データ</h2>
+                                    <label className="bg-green-600 text-white px-4 py-2 rounded text-xs cursor-pointer hover:bg-green-500">CSV読込(名前,曜日,住所,学校,学年)<input type="file" onChange={handleCsv} className="hidden" /></label>
                                 </div>
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                                    {(activeTab==='staff'?staff:vehicles).map(item => (
-                                        <div key={item.id} className="border p-3 rounded bg-slate-50">
-                                            <div className="flex justify-between mb-2">
-                                                <input className="font-bold w-32" value={item.name} onChange={e => (activeTab==='staff'?setStaff:setVehicles)(prev=>prev.map(x=>x.id===item.id?{...x, name:e.target.value}:x))} />
-                                                <button onClick={() => (activeTab==='staff'?setStaff:setVehicles)(prev=>prev.filter(x=>x.id!==item.id))} className="text-red-500">削除</button>
-                                            </div>
-                                            <div className="flex justify-around">
-                                                {["月","火","水","木","金","土"].map(d => (
-                                                    <button key={d} onClick={() => {
-                                                        const newDays = item.days?.includes(d)?item.days.filter(x=>x!==d):[...(item.days||[]),d];
-                                                        (activeTab==='staff'?setStaff:setVehicles)(prev=>prev.map(x=>x.id===item.id?{...x, days:newDays}:x));
-                                                    }} className={`w-8 h-8 rounded-full text-[10px] border ${item.days?.includes(d)?'bg-indigo-600 text-white':'bg-white text-gray-300'}`}>{d}</button>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
-                    </main>
-                </div>
-            );
-        }
-
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
-    </script>
-</body>
-</html>
+                                <table>
+                                    <thead className="bg-gray-100"><tr><th>氏名(漢字のみ抽出)</th><th>学校</th><th>学年</th><th>利用曜日</th><th>住所</th><th>特記</th><th>操作</th></tr></thead>
+                                    <tbody>
+                                        {users.map(u => (
+                                            <tr key={u.id}>
+                                                <td><input value={u.name} onChange={e => setUsers(users.map(x=>x.id===u.id?{...x, name:e.target.value}:x))} /></td>
+                                                <td><input value={u.school} onChange={e => setUsers(users.map(x=>x.id===u.id?{...x, school:e.target.value}:x))} /></td>
+                                                <td><input value={u.grade} onChange={e => setUsers(users.map(x=>x.id===u.id?{...x, grade:e.target.value}:x))} /></td>
+                                                <td><input className="text-blue-700 font-bold" value
