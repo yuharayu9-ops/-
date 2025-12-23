@@ -2,17 +2,17 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>放デイ送迎システム - AI完全自動反映版</title>
+    <title>放デイ送迎システム - 管理画面復活版</title>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { font-family: sans-serif; background: #f1f5f9; font-size: 11px; }
-        table { border-collapse: collapse; width: 100%; border: 2.5px solid black; }
+        .tab-active { border-bottom: 3px solid #4f46e5; color: #4f46e5; font-weight: bold; }
+        table { border-collapse: collapse; width: 100%; border: 2px solid black; }
         th, td { border: 1px solid black; padding: 4px; font-weight: bold; }
-        .print-area { width: 100%; background: white; padding: 10mm; border: 2px solid #000; }
-        @media print { .no-print { display: none; } .print-area { border: none; padding: 0; } }
+        @media print { .no-print { display: none !important; } }
     </style>
 </head>
 <body>
@@ -24,148 +24,157 @@
         const GEMINI_API_KEY = "AIzaSyCXnqoF4YbWXDyQIbyFC_8x_fGAZg6aK7E"; 
 
         function App() {
-            const [users, setUsers] = useState(() => JSON.parse(localStorage.getItem('hp_u') || '[]'));
-            const [vehicles, setVehicles] = useState(() => JSON.parse(localStorage.getItem('hp_v') || '[{"id":1,"name":"セレナ"},{"id":2,"name":"紺ハイ"}]'));
-            const [routes, setRoutes] = useState(() => JSON.parse(localStorage.getItem('hp_r') || '{}'));
+            const [activeTab, setActiveTab] = useState('schedule');
+            const [users, setUsers] = useState(() => JSON.parse(localStorage.getItem('hp_u_v4') || '[]'));
+            const [staff, setStaff] = useState(() => JSON.parse(localStorage.getItem('hp_s_v4') || '[]'));
+            const [vehicles, setVehicles] = useState(() => JSON.parse(localStorage.getItem('hp_v_v4') || '[{"id":1,"name":"セレナ"},{"id":2,"name":"紺ハイ"}]'));
+            const [routes, setRoutes] = useState(() => JSON.parse(localStorage.getItem('hp_r_v4') || '{}'));
             const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
             const [loading, setLoading] = useState(false);
 
             useEffect(() => {
-                localStorage.setItem('hp_u', JSON.stringify(users));
-                localStorage.setItem('hp_v', JSON.stringify(vehicles));
-                localStorage.setItem('hp_r', JSON.stringify(routes));
-            }, [users, vehicles, routes]);
+                localStorage.setItem('hp_u_v4', JSON.stringify(users));
+                localStorage.setItem('hp_s_v4', JSON.stringify(staff));
+                localStorage.setItem('hp_v_v4', JSON.stringify(vehicles));
+                localStorage.setItem('hp_r_v4', JSON.stringify(routes));
+            }, [users, staff, vehicles, routes]);
 
-            // 【漢字抽出】ひらがなだけの行を無視して漢字のみ取得
-            const extractKanjiName = (text) => {
-                if (!text) return "";
-                const lines = text.replace(/"/g, '').split(/[\n\r]+/).map(s => s.trim());
+            const cleanName = (t) => {
+                if (!t) return "";
+                const lines = t.replace(/"/g, '').split(/[\n\r]+/).map(s => s.trim());
                 return lines.find(l => /[一-龠々]/.test(l)) || lines[0];
             };
 
-            // 【CSV読込】1:名前, 4:学校, 5:学年
             const handleCsv = (e) => {
                 const reader = new FileReader();
                 reader.onload = (ev) => {
                     const rows = ev.target.result.split('\n').slice(1);
                     const parsed = rows.filter(r => r.trim()).map((row, i) => {
                         const c = row.split(',').map(v => v.trim().replace(/^"|"$/g, ''));
-                        return {
-                            id: Date.now() + i,
-                            name: extractKanjiName(c[0]),
-                            group: c[1] || "", 
-                            address: c[2] || "",
-                            school: c[3] || "", // 4列目
-                            grade: c[4] || ""    // 5列目
-                        };
+                        return { id: Date.now() + i, name: cleanName(c[0]), group: c[1]||"", address: c[2]||"", school: c[3]||"", grade: c[4]||"" };
                     }).filter(u => u.name !== "");
                     setUsers([...users, ...parsed]);
                 };
                 reader.readAsText(e.target.files[0], 'Shift-JIS');
             };
 
-            // 【AI自動送迎作成】
             const runAI = async () => {
-                if (!GEMINI_API_KEY || GEMINI_API_KEY.includes("YOUR")) {
-                    alert("APIキーを25行目に正しく貼り付けてください。"); return;
+                if (!GEMINI_API_KEY || GEMINI_API_KEY === "YOUR_API_KEY") {
+                    alert("APIキーが設定されていません。25行目を確認してください。"); return;
                 }
                 setLoading(true);
                 try {
-                    const prompt = `以下の放デイ利用者の送迎ルートを計算し、指定のJSON形式のみで返してください。
-                    車両: ${vehicles.map(v=>v.name).join(', ')}
-                    利用者: ${users.map(u => `${u.name}(住所:${u.address})`).join(', ')}
-                    出力形式: {"迎え": {"車名1": [{"time": "10:00", "name": "名前"}]}, "送り": {"車名1": [{"time": "16:00", "name": "名前"}]}}`;
-
+                    const prompt = `Create route JSON. Cars: ${vehicles.map(v=>v.name).join(',')}. People: ${users.map(u=>u.name).join(',')}. Format: {"迎え":{"車名":[{"time":"10:00","name":"名前"}]},"送り":{"車名":[{"time":"16:00","name":"名前"}]}}`;
                     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
                     });
                     const data = await res.json();
-                    const aiText = data.candidates[0].content.parts[0].text.replace(/```json|```/g, '').trim();
-                    const aiResult = JSON.parse(aiText);
-                    
+                    const aiResult = JSON.parse(data.candidates[0].content.parts[0].text.replace(/```json|```/g, ''));
                     const newRoutes = { ...routes };
                     Object.keys(aiResult).forEach(type => {
                         Object.keys(aiResult[type]).forEach(carName => {
                             const vehicle = vehicles.find(v => v.name === carName);
-                            if (vehicle) {
-                                newRoutes[`${selectedDate}_${vehicle.id}_${type}`] = aiResult[type][carName];
-                            }
+                            if (vehicle) newRoutes[`${selectedDate}_${vehicle.id}_${type}`] = aiResult[type][carName];
                         });
                     });
                     setRoutes(newRoutes);
-                    alert("AIルートを自動反映しました！");
+                    alert("AIルートを反映しました！");
                 } catch (e) {
-                    alert("AI作成中にエラーが発生しました。APIキーを確認してください。");
+                    alert("エラー：APIキーが無効か、AIが回答できませんでした。設定を再確認してください。");
                 }
                 setLoading(false);
             };
 
             return (
-                <div className="p-4">
-                    <div className="no-print flex gap-4 mb-4 bg-slate-800 p-4 rounded text-white items-center shadow-lg">
-                        <h1 className="font-bold">送迎システム v3</h1>
-                        <input type="file" onChange={handleCsv} className="text-xs" />
-                        <button onClick={runAI} className="bg-orange-500 px-6 py-2 rounded-full font-bold shadow-md hover:bg-orange-400">
-                            {loading ? "AI計算中..." : "AI送迎ルートを自動作成"}
-                        </button>
-                    </div>
-
-                    <div className="print-area shadow-2xl mx-auto max-w-5xl bg-white">
-                        <div className="flex justify-between items-start border-b-2 border-black pb-2 mb-4">
-                            <div>【事業所名】<br/>{selectedDate}</div>
-                            <h2 className="text-3xl font-black underline">送 迎 計 画 表</h2>
-                            <div className="text-right border border-black p-1 text-[9px]">スタッフ体制<br/>_________ / _________</div>
+                <div className="min-h-screen flex flex-col">
+                    <header className="bg-slate-900 text-white p-3 no-print flex justify-between items-center shadow-md">
+                        <h1 className="font-bold">放デイ送迎システム v4</h1>
+                        <div className="flex gap-2">
+                            <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} className="text-black p-1 rounded text-xs" />
+                            <button onClick={runAI} className="bg-orange-600 px-4 py-1 rounded font-bold hover:bg-orange-500">
+                                {loading ? "AI作成中..." : "AI送迎作成"}
+                            </button>
+                            <button onClick={() => window.print()} className="bg-blue-600 px-4 py-1 rounded font-bold">印刷</button>
                         </div>
+                    </header>
 
-                        <div className="grid grid-cols-12 gap-4">
-                            <div className="col-span-8 space-y-6">
-                                {['迎え', '送り'].map(type => (
-                                    <div key={type}>
-                                        <h3 className="bg-gray-100 border border-black px-2 font-bold mb-1">■ {type}便</h3>
-                                        <div className="grid grid-cols-2 gap-2">
-                                            {vehicles.map(v => {
-                                                const rKey = `${selectedDate}_${v.id}_${type}`;
-                                                const route = routes[rKey] || Array(6).fill({time:'', name:''});
-                                                return (
-                                                    <div key={v.id} className="border border-black">
-                                                        <div className="bg-gray-50 p-1 text-center border-b border-black">車: {v.name}</div>
-                                                        <table>
-                                                            {route.map((r, idx) => (
-                                                                <tr key={idx} className="h-7">
-                                                                    <td className="w-12 text-center border-r">{r.time}</td>
-                                                                    <td className="px-2">{r.name}</td>
-                                                                </tr>
-                                                            ))}
-                                                        </table>
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
+                    <nav className="flex bg-white no-print border-b shadow-sm">
+                        {[{id:'schedule', n:'送迎計画'}, {id:'users', n:'利用者名簿'}, {id:'staff', n:'職員・車両設定'}].map(t => (
+                            <button key={t.id} onClick={() => setActiveTab(t.id)} className={`flex-1 py-3 text-xs ${activeTab === t.id ? 'tab-active' : 'text-gray-400'}`}>{t.n}</button>
+                        ))}
+                    </nav>
+
+                    <main className="p-4 flex-1">
+                        {activeTab === 'schedule' && (
+                            <div className="bg-white p-6 border-2 border-black max-w-5xl mx-auto shadow-lg">
+                                <div className="flex justify-between border-b-2 border-black pb-2 mb-4">
+                                    <div className="w-40 border-b border-black text-sm">【事業所名】</div>
+                                    <h2 className="text-2xl font-black underline">送 迎 計 画 表</h2>
+                                    <div className="text-right text-[9px]">{selectedDate} (天気: )</div>
+                                </div>
+                                <div className="grid grid-cols-12 gap-4">
+                                    <div className="col-span-8 space-y-6">
+                                        {['迎え', '送り'].map(type => (
+                                            <div key={type} className="border border-black p-2">
+                                                <div className="font-bold text-xs mb-1">■ {type}便</div>
+                                                <div className="grid grid-cols-2 gap-2">
+                                                    {vehicles.map(v => {
+                                                        const r = routes[`${selectedDate}_${v.id}_${type}`] || Array(6).fill({time:'', name:''});
+                                                        return (
+                                                            <div key={v.id} className="border border-black">
+                                                                <div className="bg-gray-100 text-center font-bold border-b border-black">車: {v.name}</div>
+                                                                <table>{r.map((row, i) => <tr key={i} className="h-6"><td className="w-10 text-center border-r">{row.time}</td><td className="px-1">{row.name}</td></tr>)}</table>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </div>
+                                        ))}
                                     </div>
-                                ))}
+                                    <div className="col-span-4 border border-black p-1">
+                                        <div className="text-center font-bold bg-gray-200 border-b border-black">出欠状況</div>
+                                        <table>
+                                            <thead><tr className="bg-gray-50"><th>No</th><th>氏名</th><th>学校</th><th>学</th></tr></thead>
+                                            <tbody>
+                                                {users.map((u, i) => (
+                                                    <tr key={u.id} className="h-6"><td className="text-center">{i+1}</td><td className="px-1 text-[12px]">{u.name}</td><td className="px-1">{u.school}</td><td className="text-center">{u.grade}</td></tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
                             </div>
+                        )}
 
-                            <div className="col-span-4">
-                                <h3 className="text-center font-bold border-2 border-black bg-gray-200">出欠・利用者名簿</h3>
+                        {activeTab === 'users' && (
+                            <div className="bg-white p-4 rounded shadow">
+                                <div className="flex justify-between mb-4"><h2 className="font-bold">利用者名簿</h2><input type="file" onChange={handleCsv} className="text-xs" /></div>
                                 <table>
-                                    <thead><tr className="bg-gray-50"><th>No</th><th>氏名</th><th>学校</th><th>学年</th></tr></thead>
+                                    <thead className="bg-gray-100"><tr><th>氏名(漢字抽出)</th><th>学校</th><th>学年</th><th>住所</th><th>操作</th></tr></thead>
                                     <tbody>
-                                        {users.map((u, i) => (
-                                            <tr key={u.id} className="h-6">
-                                                <td className="text-center">{i+1}</td>
-                                                <td className="px-1 text-[12px]">{u.name}</td>
-                                                <td className="px-1">{u.school}</td>
-                                                <td className="text-center">{u.grade}</td>
+                                        {users.map(u => (
+                                            <tr key={u.id}>
+                                                <td>{u.name}</td><td>{u.school}</td><td>{u.grade}</td><td>{u.address}</td>
+                                                <td><button onClick={()=>setUsers(users.filter(x=>x.id!==u.id))} className="text-red-500 underline">削除</button></td>
                                             </tr>
                                         ))}
                                     </tbody>
                                 </table>
                             </div>
-                        </div>
-                    </div>
-                    <button onClick={() => window.print()} className="no-print fixed bottom-10 right-10 bg-blue-600 text-white p-4 rounded-full shadow-2xl font-bold">印刷用画面を表示</button>
+                        )}
+
+                        {activeTab === 'staff' && (
+                            <div className="bg-white p-4 rounded shadow space-y-8">
+                                <div>
+                                    <h2 className="font-bold mb-2">車両設定</h2>
+                                    <div className="flex gap-2 mb-4"><input id="vn" className="border p-1" placeholder="新車名" /><button onClick={()=>{setVehicles([...vehicles,{id:Date.now(),name:document.getElementById('vn').value}]);document.getElementById('vn').value=''}} className="bg-indigo-600 text-white px-4 rounded">追加</button></div>
+                                    <div className="flex gap-4">{vehicles.map(v => <div key={v.id} className="border p-2 rounded bg-slate-50">{v.name} <button onClick={()=>setVehicles(vehicles.filter(x=>x.id!==v.id))} className="text-red-500 ml-2">×</button></div>)}</div>
+                                </div>
+                            </div>
+                        )}
+                    </main>
                 </div>
             );
         }
