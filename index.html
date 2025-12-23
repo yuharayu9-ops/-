@@ -2,15 +2,15 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>SHOJIN 送迎管理システム</title>
+    <title>SHOJIN 送迎管理システム - 最終版</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { font-family: sans-serif; background: #f1f5f9; font-size: 11px; }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
         .tab-btn.active { border-bottom: 4px solid #4f46e5; color: #4f46e5; font-weight: bold; background: white; }
-        table { border-collapse: collapse; width: 100%; border: 1px solid #000; background: #fff; }
-        th, td { border: 1px solid #000; padding: 4px; font-weight: bold; text-align: center; }
+        table { border-collapse: collapse; width: 100%; border: 2px solid #000; background: #fff; }
+        th, td { border: 1px solid #000; padding: 5px; font-weight: bold; text-align: center; }
         .day-on { background: #4f46e5 !important; color: white !important; }
         @media print { .no-print { display: none !important; } }
     </style>
@@ -23,28 +23,31 @@
     // ★ここにAPIキー(AIza...)を貼り付けてください
     const API_KEY = "AIzaSyBXdJEj9HchCarhQd_RSSDo_hgEvxOYQq8";
 
-    // データの保存先（ブラウザ）
-    let state = JSON.parse(localStorage.getItem('shojin_v100')) || {
+    // データ管理
+    let state = JSON.parse(localStorage.getItem('shojin_system_final')) || {
         curId: 'off1',
         off1: { name: "星の村", u:[], v:[], s:[], r:{} },
         off2: { name: "プリズム", u:[], v:[], r:{} },
         off3: { name: "カラフル", u:[], v:[], r:{} }
     };
 
-    function save() {
-        localStorage.setItem('shojin_v100', JSON.stringify(state));
-        render();
-    }
+    // 保存と描画
+    window.saveAndRender = () => {
+        localStorage.setItem('shojin_system_final', JSON.stringify(state));
+        window.render();
+    };
 
     const getDayStr = (d) => ["日","月","火","水","木","金","土"][new Date(d).getDay()];
 
-    // CSV読み込み（改行・ひらがな・住所・学校をすべて処理）
+    // CSV読み込み
     window.handleCsv = (e) => {
         const file = e.target.files[0];
+        if(!file) return;
         const reader = new FileReader();
         reader.onload = (ev) => {
             const lines = ev.target.result.split(/\r\n|\n/).slice(1);
             const cur = state[state.curId];
+            let count = 0;
             lines.forEach(line => {
                 if (!line.trim()) return;
                 const c = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
@@ -52,7 +55,7 @@
                 
                 const rawName = clean(c[0]);
                 const nameParts = rawName.split(/[\n\r\s]+/);
-                const kanjiName = nameParts[nameParts.length - 1]; // 最後の漢字を抽出
+                const kanjiName = nameParts[nameParts.length - 1]; 
 
                 if (kanjiName) {
                     cur.u.push({
@@ -63,15 +66,16 @@
                         school: clean(c[3]),
                         memo: ""
                     });
+                    count++;
                 }
             });
-            alert(cur.name + "の名簿を読み込みました");
-            save();
+            alert(count + "名の名簿を読み込みました");
+            window.saveAndRender();
         };
         reader.readAsText(file, 'Shift-JIS');
     };
 
-    // AI送迎の作成（AI Studioのコアロジックを直結）
+    // AI送迎作成
     window.runAI = async () => {
         const date = document.getElementById('dateInput').value;
         const day = getDayStr(date);
@@ -79,48 +83,47 @@
         const activeU = cur.u.filter(u => u.group.includes(day));
         const activeV = cur.v.filter(v => v.days && v.days.includes(day));
 
-        if (!activeU.length || !activeV.length) return alert("利用者、または稼働車両が登録されていません");
+        if (!activeU.length || !activeV.length) return alert("利用者、または車両が登録されていません");
 
         const btn = document.getElementById('aiBtn');
-        btn.innerText = "AIが考え中...";
+        btn.innerText = "作成中...";
         try {
             const genAI = new GoogleGenerativeAI(API_KEY);
             const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-            const prompt = `${cur.name}の送迎表。車両:${activeV.map(v=>v.name)}、利用者:${activeU.map(u=>u.name)}。JSONのみ回答:{"迎え":{"車両名":[{"time":"14:00","name":"名前"}]},"送り":{"車両名":[{"time":"17:00","name":"名前"}]}}`;
+            const prompt = `${cur.name}の送迎。車両:${activeV.map(v=>v.name)}、利用者:${activeU.map(u=>u.name)}。JSONのみ:{"迎え":{"車名":[{"time":"14:00","name":"名前"}]},"送り":{"車名":[{"time":"17:00","name":"名前"}]}}`;
             
             const result = await model.generateContent(prompt);
-            const response = await result.response;
-            const jsonText = response.text().replace(/```json|```/g, '').trim();
+            const jsonText = result.response.text().replace(/```json|```/g, '').trim();
             cur.r[date] = JSON.parse(jsonText);
-            save();
+            window.saveAndRender();
         } catch (e) { alert("AIエラー。APIキーを確認してください"); }
         btn.innerText = "AI送迎作成";
     };
 
-    // 全体の再表示
+    // 描画処理
     window.render = () => {
         const cur = state[state.curId];
         const date = document.getElementById('dateInput').value;
         const day = getDayStr(date);
 
-        document.getElementById('officeTitle').innerText = cur.name + " 送迎計画表";
+        document.getElementById('officeTitle').innerText = cur.name;
         document.getElementById('officeSelect').value = state.curId;
 
-        // 計画表（迎え・送り）
+        // 計画表の更新
         const activeV = cur.v.filter(v => v.days && v.days.includes(day));
         ['迎え', '送り'].forEach(type => {
-            const container = document.getElementById(type + 'Area');
-            container.innerHTML = activeV.map(v => `
+            const area = document.getElementById(type + 'Area');
+            area.innerHTML = activeV.map(v => `
                 <div class="border-2 border-black bg-white">
-                    <div class="bg-slate-800 text-white p-1 text-[9px] flex justify-between uppercase">
+                    <div class="bg-slate-800 text-white p-1 text-[9px] flex justify-between">
                         <span>車:${v.name}</span>
-                        <span>運:<select class="bg-transparent border-none text-white"><option>-</option>${cur.s.filter(s=>s.days.includes(day)).map(s=>`<option>${s.name}</option>`).join('')}</select></span>
+                        <span>運:<select class="bg-transparent border-none text-white font-bold"><option>-</option>${cur.s.filter(s=>s.days.includes(day)).map(s=>`<option>${s.name}</option>`).join('')}</select></span>
                     </div>
                     <table class="w-full">
                         ${(cur.r[date]?.[type]?.[v.name] || Array(6).fill({time:'',name:''})).map(row => `
-                            <tr class="h-8 border-b border-black">
+                            <tr class="h-8 border-b border-black text-[11px] font-bold">
                                 <td class="w-10 border-r bg-slate-50">${row.time || ''}</td>
-                                <td class="font-bold text-xs">${row.name || ''}</td>
+                                <td>${row.name || ''}</td>
                             </tr>
                         `).join('')}
                     </table>
@@ -128,45 +131,43 @@
             `).join('');
         });
 
-        // 出欠・特記リスト
+        // 出欠・特記
         const activeU = cur.u.filter(u => u.group.includes(day));
         document.getElementById('attendList').innerHTML = activeU.map(u => `
             <tr class="h-8 border-b border-black">
                 <td class="font-bold text-[10px]">${u.name}</td>
                 <td class="text-[9px]">${u.school || ''}</td>
-                <td><input type="text" class="w-full text-left px-1 text-[9px]" value="${u.memo||''}" onchange="updateMemo('${u.id}', this.value)" placeholder="..."></td>
+                <td><input type="text" class="w-full text-[9px] px-1 text-left" value="${u.memo||''}" onchange="window.updateMemo('${u.id}', this.value)"></td>
             </tr>
         `).join('');
 
-        // 名簿タブ
+        // 名簿
         document.getElementById('userTable').innerHTML = cur.u.map(u => `
             <tr class="border-b text-[10px]">
                 <td class="p-1 font-bold">${u.name}</td>
                 <td class="p-1">${u.group}</td>
                 <td class="p-1 text-left">${u.address || ''}</td>
                 <td class="p-1">${u.school || ''}</td>
-                <td class="p-1"><button onclick="deleteData('u', '${u.id}')" class="text-red-500 underline">削除</button></td>
+                <td class="p-1"><button onclick="window.deleteData('u', '${u.id}')" class="text-red-500 underline">削除</button></td>
             </tr>
         `).join('');
 
-        // 設定（車両・職員）
-        const drawList = (items, type) => items.map(item => `
-            <div class="flex items-center justify-between p-2 border-b">
-                <input type="text" value="${item.name}" class="w-20 font-bold" onchange="rename('${type}', '${item.id}', this.value)">
+        // 職員・車両リスト
+        const drawConfig = (list, type) => list.map(item => `
+            <div class="flex items-center justify-between p-2 border-b bg-white mb-1 rounded shadow-sm">
+                <input type="text" value="${item.name}" class="font-bold text-sm w-24" onchange="window.rename('${type}', '${item.id}', this.value)">
                 <div class="flex gap-1">
-                    ${["月","火","水","木","金","土"].map(d => `
-                        <button onclick="toggleDay('${type}', '${item.id}', '${d}')" class="w-7 h-7 border rounded text-[10px] ${item.days.includes(d)?'day-on':'bg-white'}">${d}</button>
-                    `).join('')}
-                    <button onclick="deleteData('${type}', '${item.id}')" class="ml-2 text-red-300">×</button>
+                    ${["月","火","水","木","金","土"].map(d => `<button onclick="window.toggleDay('${type}', '${item.id}', '${d}')" class="w-7 h-7 border rounded text-[10px] font-bold ${item.days.includes(d)?'day-on':'bg-white'}">${d}</button>`).join('')}
+                    <button onclick="window.deleteData('${type}', '${item.id}')" class="ml-2 text-red-500 font-bold px-2">×</button>
                 </div>
             </div>
         `).join('');
-        document.getElementById('staffList').innerHTML = drawList(cur.s, 's');
-        document.getElementById('vehicleList').innerHTML = drawList(cur.v, 'v');
+        document.getElementById('staffList').innerHTML = drawConfig(cur.s, 's');
+        document.getElementById('vehicleList').innerHTML = drawConfig(cur.v, 'v');
     };
 
-    // 操作用
-    window.setOffice = (id) => { state.curId = id; save(); };
+    // 全ての操作関数を window に紐付け
+    window.setOffice = (id) => { state.curId = id; window.saveAndRender(); };
     window.setTab = (tab) => {
         document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
         document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -174,51 +175,55 @@
         document.getElementById(tab + 'Btn').classList.add('active');
     };
     window.addConfig = (type) => {
-        const name = prompt("名前を入力");
-        if(name) { state[state.curId][type].push({id:Date.now().toString(), name, days:[]}); save(); }
+        const name = prompt("名称を入力してください");
+        if(name) { state[state.curId][type].push({id:Date.now().toString(), name, days:[]}); window.saveAndRender(); }
     };
     window.toggleDay = (type, id, day) => {
         const item = state[state.curId][type].find(x => x.id === id);
         item.days = item.days.includes(day) ? item.days.filter(d => d !== day) : [...item.days, day];
-        save();
+        window.saveAndRender();
     };
-    window.deleteData = (type, id) => { state[state.curId][type] = state[state.curId][type].filter(x => x.id !== id); save(); };
-    window.updateMemo = (id, val) => { state[state.curId].u.find(x=>x.id===id).memo = val; save(); };
-    window.rename = (type, id, val) => { state[state.curId][type].find(x=>x.id===id).name = val; save(); };
+    window.deleteData = (type, id) => {
+        if(!confirm("削除してもよろしいですか？")) return;
+        state[state.curId][type] = state[state.curId][type].filter(x => x.id !== id);
+        window.saveAndRender();
+    };
+    window.updateMemo = (id, val) => { state[state.curId].u.find(x=>x.id===id).memo = val; window.saveAndRender(); };
+    window.rename = (type, id, val) => { state[state.curId][type].find(x=>x.id===id).name = val; window.saveAndRender(); };
 
-    // 起動
+    // 初期化
     document.getElementById('dateInput').value = new Date().toISOString().split('T')[0];
-    render();
+    window.render();
 </script>
 
-<header class="bg-indigo-900 text-white p-4 no-print flex justify-between items-center shadow-xl">
+<header class="bg-indigo-900 text-white p-4 no-print flex justify-between items-center shadow-lg">
     <div class="flex items-center gap-4">
-        <h1 class="text-xl font-black italic text-orange-400">SHOJIN SYSTEM</h1>
-        <select id="officeSelect" onchange="setOffice(this.value)" class="bg-white text-black font-bold p-1 rounded text-xs">
+        <h1 class="text-xl font-black italic text-orange-400 tracking-tighter">SHOJIN SYSTEM</h1>
+        <select id="officeSelect" onchange="window.setOffice(this.value)" class="bg-white text-black font-bold p-1 rounded text-sm">
             <option value="off1">星の村</option>
             <option value="off2">プリズム</option>
             <option value="off3">カラフル</option>
         </select>
     </div>
     <div class="flex gap-2">
-        <input type="date" id="dateInput" onchange="render()" class="text-black p-1 rounded font-bold shadow-inner">
-        <button id="aiBtn" onclick="runAI()" class="bg-orange-500 px-6 py-1 rounded-full font-black hover:bg-orange-400 shadow-lg">AI送迎作成</button>
-        <button onclick="window.print()" class="bg-blue-600 px-4 py-1 rounded-full font-bold shadow-lg">印刷</button>
+        <input type="date" id="dateInput" onchange="window.render()" class="text-black p-1 rounded font-bold">
+        <button id="aiBtn" onclick="window.runAI()" class="bg-orange-500 px-6 py-1 rounded-full font-black hover:bg-orange-400 shadow-md">AI送迎作成</button>
+        <button onclick="window.print()" class="bg-blue-600 px-4 py-1 rounded-full font-bold shadow-md">印刷</button>
     </div>
 </header>
 
-<nav class="flex bg-slate-200 no-print border-b-2 border-slate-400 shadow-inner">
-    <button id="scheduleBtn" onclick="setTab('schedule')" class="tab-btn active flex-1 py-3 text-xs">送迎計画表</button>
-    <button id="usersBtn" onclick="setTab('users')" class="tab-btn flex-1 py-3 text-xs">利用者名簿 (住所・学校)</button>
-    <button id="configBtn" onclick="setTab('config')" class="tab-btn flex-1 py-3 text-xs">職員・車両設定</button>
+<nav class="flex bg-slate-200 no-print border-b-2 border-slate-400">
+    <button id="scheduleBtn" onclick="window.setTab('schedule')" class="tab-btn active flex-1 py-3 text-xs">送迎計画表</button>
+    <button id="usersBtn" onclick="window.setTab('users')" class="tab-btn flex-1 py-3 text-xs">名簿 (住所・学校対応)</button>
+    <button id="configBtn" onclick="window.setTab('config')" class="tab-btn flex-1 py-3 text-xs">車両・職員設定</button>
 </nav>
 
 <main class="p-4 flex-1 overflow-auto">
     <div id="scheduleTab" class="tab-content active">
         <div class="bg-white p-8 border-2 border-black max-w-5xl mx-auto shadow-2xl">
             <div class="flex justify-between border-b-4 border-black mb-4 pb-1">
-                <h2 id="officeTitle" class="text-3xl font-black italic underline">送迎計画表</h2>
-                <div class="text-lg font-bold">日付: <span id="dateDisplay"></span></div>
+                <h2 id="officeTitle" class="text-3xl font-black italic underline">事業所名</h2>
+                <div class="text-xl font-bold italic">送迎計画表</div>
             </div>
             <div class="grid grid-cols-12 gap-6">
                 <div class="col-span-8 space-y-6">
@@ -231,8 +236,8 @@
                         <div id="送りArea" class="grid grid-cols-2 gap-4"></div>
                     </div>
                 </div>
-                <div class="col-span-4 border-2 border-black p-2 bg-yellow-50 shadow-inner">
-                    <div class="text-center font-black bg-black text-white py-1 mb-2 text-xs">本日出欠・特記事項</div>
+                <div class="col-span-4 border-2 border-black p-2 bg-yellow-50">
+                    <div class="text-center font-black bg-black text-white py-1 mb-2 text-xs">出欠・特記</div>
                     <table class="w-full">
                         <thead><tr class="bg-slate-300 text-[9px]"><th>氏名</th><th>学校</th><th>備考</th></tr></thead>
                         <tbody id="attendList"></tbody>
@@ -243,9 +248,36 @@
     </div>
 
     <div id="usersTab" class="tab-content">
-        <div class="bg-white p-6 border-2 border-black rounded-xl shadow-lg">
+        <div class="bg-white p-6 border-2 border-black rounded-xl">
             <div class="flex justify-between mb-4 items-center">
-                <h2 class="text-xl font-black text-indigo-900">利用者データ (CSV読込)</h2>
-                <label class="bg-green-700 text-white px-6 py-2 rounded-full font-black cursor-pointer text-xs hover:bg-green-600 transition">
-                    CSVファイルを選択
-                    <input type="file
+                <h2 class="text-xl font-black text-indigo-900 italic">利用者名簿</h2>
+                <label class="bg-green-700 text-white px-6 py-2 rounded-full font-black cursor-pointer text-xs shadow hover:bg-green-600 transition">
+                    CSV読込 (住所・学校)
+                    <input type="file" onchange="window.handleCsv(event)" class="hidden">
+                </label>
+            </div>
+            <table class="w-full">
+                <thead class="bg-slate-100"><tr><th>名前</th><th>曜日</th><th>住所</th><th>学校</th><th>操作</th></tr></thead>
+                <tbody id="userTable"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div id="configTab" class="tab-content">
+        <div class="grid grid-cols-2 gap-8 max-w-4xl mx-auto">
+            <div class="bg-slate-100 p-6 border-2 border-black rounded-xl shadow-md">
+                <h3 class="text-lg font-black mb-4 border-l-8 border-indigo-600 pl-3">職員設定 (出勤日)</h3>
+                <div id="staffList" class="mb-4"></div>
+                <button onclick="window.addConfig('s')" class="w-full bg-indigo-900 text-white py-2 rounded font-bold shadow hover:bg-indigo-800 text-sm">+ 職員を追加</button>
+            </div>
+            <div class="bg-slate-100 p-6 border-2 border-black rounded-xl shadow-md">
+                <h3 class="text-lg font-black mb-4 border-l-8 border-orange-600 pl-3">車両設定 (稼働日)</h3>
+                <div id="vehicleList" class="mb-4"></div>
+                <button onclick="window.addConfig('v')" class="w-full bg-orange-600 text-white py-2 rounded font-bold shadow hover:bg-orange-500 text-sm">+ 車両を追加</button>
+            </div>
+        </div>
+    </div>
+</main>
+
+</body>
+</html>
