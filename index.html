@@ -2,17 +2,17 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>放デイ送迎管理 - 星の村専用版</title>
+    <title>送迎管理システム - 星の村・完全修正版</title>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        body { font-family: sans-serif; background: #f8fafc; font-size: 11px; }
-        .tab-active { border-bottom: 3px solid #4f46e5; color: #4f46e5; font-weight: bold; }
+        body { font-family: sans-serif; background: #f1f5f9; font-size: 11px; }
+        .tab-active { border-bottom: 4px solid #4f46e5; color: #4f46e5; font-weight: bold; background: white; }
         table { border-collapse: collapse; width: 100%; border: 2px solid black; background: white; }
-        th, td { border: 1px solid black; padding: 4px; font-weight: bold; }
-        input, select { width: 100%; border: none; background: transparent; outline: none; }
+        th, td { border: 1px solid black; padding: 6px; font-weight: bold; }
+        input { width: 100%; border: none; background: transparent; outline: none; }
         .day-on { background: #4f46e5 !important; color: white !important; }
         @media print { .no-print { display: none !important; } }
     </style>
@@ -22,7 +22,7 @@
     <script type="text/babel">
         const { useState, useEffect } = React;
 
-        // ★ここにAPIキー(AIza...)を貼り付け
+        // ★ここにAPIキー(AIza...)を貼り付けてください
         const GEMINI_API_KEY = "AIzaSyBXdJEj9HchCarhQd_RSSDo_hgEvxOYQq8"; 
 
         function App() {
@@ -30,110 +30,109 @@
             const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
             const [loading, setLoading] = useState(false);
             const [db, setDb] = useState(() => {
-                const saved = localStorage.getItem('hd_star_v1');
-                return saved ? JSON.parse(saved) : { "off1": { name: "星の村", u:[], s:[], v:[], r:{} } };
+                const saved = localStorage.getItem('star_village_vfinal');
+                return saved ? JSON.parse(saved) : { u:[], s:[], v:[], r:{} };
             });
-            const [curId, setCurId] = useState('off1');
 
-            useEffect(() => { localStorage.setItem('hd_star_v1', JSON.stringify(db)); }, [db]);
+            useEffect(() => { localStorage.setItem('star_village_vfinal', JSON.stringify(db)); }, [db]);
 
-            const cur = db[curId] || { name: "星の村", u:[], s:[], v:[], r:{} };
             const currentDay = ["日","月","火","水","木","金","土"][new Date(selectedDate).getDay()];
-
-            const updateCur = (key, val) => {
-                setDb(prev => ({...prev, [curId]: {...(prev[curId]||{}), [key]: val}}));
-            };
 
             const handleCsv = (e) => {
                 const reader = new FileReader();
                 reader.onload = (ev) => {
-                    const lines = ev.target.result.split('\n').slice(1); // ヘッダー除去
-                    const parsed = lines.filter(r => r.trim()).map((row, i) => {
-                        const c = row.split(',').map(v => v.trim().replace(/^"|"$/g, ''));
-                        
-                        // 【超重要】セル内の「ひらがな＋改行」を消して漢字だけにする処理
-                        const nameRaw = c[0] || "";
-                        const nameOnly = nameRaw.split(/[\n\r]+/).pop(); // 改行の後の「漢字」だけ取得
+                    // CSVの全行を取得し、空行を飛ばす
+                    const lines = ev.target.result.split(/\r\n|\n/).filter(line => line.trim());
+                    // 1行目のヘッダー（利用者名...）を飛ばす
+                    const dataRows = lines.slice(1);
+
+                    const parsed = dataRows.map((row, i) => {
+                        // カンマで分割。引用符内の改行等に強い分割方法
+                        const c = row.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g) || [];
+                        const clean = (str) => str ? str.replace(/^"|"$/g, '').trim() : "";
+
+                        // セル内の「ひらがな＋改行」を消して漢字だけにする（最後の行が漢字であることを利用）
+                        const rawName = clean(c[0]);
+                        const nameParts = rawName.split(/[\n\r]+/);
+                        const kanjiName = nameParts[nameParts.length - 1]; // 最後の1行（漢字）を取得
 
                         return { 
-                            id: Date.now()+i, 
-                            name: nameOnly, 
-                            group: c[1]||"", 
-                            school: c[3]||"", 
-                            grade: c[4]||"", 
-                            memo: "" 
+                            id: Date.now() + i,
+                            name: kanjiName || "名前なし",
+                            group: clean(c[1]), // 曜日（例：火曜　星の村）
+                            school: clean(c[3]), 
+                            grade: clean(c[4]), 
+                            memo: ""
                         };
-                    });
-                    updateCur('u', [...cur.u, ...parsed]);
-                    alert("名簿を読み込みました。漢字のみ抽出しました。");
+                    }).filter(u => u.name !== "名前なし");
+
+                    setDb(prev => ({...prev, u: [...prev.u, ...parsed]}));
+                    alert(`${parsed.length}名のデータを読み込みました。漢字名のみ抽出しました。`);
                 };
                 reader.readAsText(e.target.files[0], 'Shift-JIS');
             };
 
             const runAI = async () => {
-                if (!GEMINI_API_KEY || GEMINI_API_KEY === "ここに貼り付け") return alert("APIキーを設定してください。");
-                // 「火曜」などの文字が含まれる利用者だけ抽出
-                const activeU = cur.u.filter(u => u.group?.includes(currentDay));
-                const activeV = cur.v.filter(v => v.days?.includes(currentDay));
-                
-                if (activeU.length === 0 || activeV.length === 0) return alert("本日の利用者、または車両がいません。");
+                if (!GEMINI_API_KEY || GEMINI_API_KEY === "ここに貼り付け") return alert("APIキーを入力してください。");
+                const activeU = db.u.filter(u => u.group.includes(currentDay));
+                const activeV = db.v.filter(v => v.days?.includes(currentDay));
+                if (activeU.length === 0 || activeV.length === 0) return alert("本日の利用者、または稼働車両がありません。");
 
                 setLoading(true);
                 try {
-                    const prompt = `Create route JSON. Cars: ${activeV.map(v=>v.name)}. People: ${activeU.map(u=>u.name)}. Format: {"迎え":{"車名":[{"time":"14:00","name":"名前"}]},"送り":{"車名":[{"time":"17:00","name":"名前"}]}}`;
+                    const prompt = `${activeV.map(v=>v.name)}で${activeU.map(u=>u.name)}を送迎。JSON形式で: {"迎え":{"車名":[{"time":"14:00","name":"名前"}]},"送り":{"車名":[{"time":"17:00","name":"名前"}]}}`;
                     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
                         method: 'POST', headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
                     });
                     const data = await res.json();
-                    const aiText = data.candidates[0].content.parts[0].text.replace(/```json|```/g, '').trim();
-                    updateCur('r', { ...cur.r, [selectedDate]: JSON.parse(aiText) });
-                } catch (e) { alert("AIエラー：設定を確認してください。"); }
+                    const aiResult = JSON.parse(data.candidates[0].content.parts[0].text.replace(/```json|```/g, '').trim());
+                    setDb(prev => ({...prev, r: { ...prev.r, [selectedDate]: aiResult }}));
+                } catch (e) { alert("AIエラー。車両と利用者の登録を確認してください。"); }
                 setLoading(false);
             };
 
             return (
                 <div className="min-h-screen flex flex-col">
-                    <header className="bg-slate-900 text-white p-3 no-print flex justify-between items-center shadow-lg">
-                        <input value={cur.name} onChange={e=>updateCur('name', e.target.value)} className="font-bold text-lg bg-transparent border-b border-slate-600" />
-                        <div className="flex gap-2">
-                            <input type="date" value={selectedDate} onChange={e=>setSelectedDate(e.target.value)} className="text-black p-1 rounded text-xs" />
-                            <button onClick={runAI} className="bg-orange-600 px-4 py-1 rounded font-bold hover:bg-orange-500 shadow-md">
-                                {loading ? "AI作成中..." : "AI送迎作成"}
+                    <header className="bg-indigo-900 text-white p-4 no-print flex justify-between items-center shadow-xl">
+                        <h1 className="text-xl font-black">星の村 送迎管理システム</h1>
+                        <div className="flex gap-3">
+                            <input type="date" value={selectedDate} onChange={e=>setSelectedDate(e.target.value)} className="text-black p-2 rounded font-bold" />
+                            <button onClick={runAI} className="bg-orange-500 px-6 py-2 rounded-full font-black hover:bg-orange-400 shadow-lg">
+                                {loading ? "AI計算中..." : "AI送迎ルート作成"}
                             </button>
-                            <button onClick={()=>window.print()} className="bg-blue-600 px-3 py-1 rounded font-bold">印刷</button>
+                            <button onClick={()=>window.print()} className="bg-white text-indigo-900 px-6 py-2 rounded-full font-black">印刷</button>
                         </div>
                     </header>
 
-                    <nav className="flex bg-white no-print border-b text-xs">
-                        <button onClick={()=>setActiveTab('schedule')} className={`flex-1 py-3 ${activeTab==='schedule'?'tab-active':''}`}>送迎計画表</button>
-                        <button onClick={()=>setActiveTab('users')} className={`flex-1 py-3 ${activeTab==='users'?'tab-active':''}`}>名簿修正</button>
-                        <button onClick={()=>setActiveTab('staff')} className={`flex-1 py-3 ${activeTab==='staff'?'tab-active':''}`}>職員・車両管理</button>
+                    <nav className="flex bg-slate-200 no-print">
+                        <button onClick={()=>setActiveTab('schedule')} className={`flex-1 py-4 text-sm ${activeTab==='schedule'?'tab-active':''}`}>送迎計画表</button>
+                        <button onClick={()=>setActiveTab('users')} className={`flex-1 py-4 text-sm ${activeTab==='users'?'tab-active':''}`}>利用者名簿 (ひらがな除去済)</button>
+                        <button onClick={()=>setActiveTab('staff')} className={`flex-1 py-4 text-sm ${activeTab==='staff'?'tab-active':''}`}>職員・車両設定</button>
                     </nav>
 
-                    <main className="p-4 flex-1">
+                    <main className="p-6 flex-1">
                         {activeTab === 'schedule' && (
-                            <div className="bg-white p-6 border-2 border-black max-w-5xl mx-auto shadow-xl">
-                                <div className="flex justify-between border-b-2 border-black mb-3 pb-1">
-                                    <h2 className="text-3xl font-black italic underline tracking-tighter">送 迎 計 画 表</h2>
-                                    <div className="font-bold text-lg">{selectedDate} ({currentDay})</div>
+                            <div className="bg-white p-8 border-2 border-black max-w-5xl mx-auto shadow-2xl">
+                                <div className="flex justify-between border-b-4 border-black mb-6 pb-2">
+                                    <h2 className="text-4xl font-black italic underline tracking-tighter">送 迎 計 画 表</h2>
+                                    <div className="text-2xl font-bold">{selectedDate} ({currentDay})</div>
                                 </div>
-                                <div className="grid grid-cols-12 gap-4">
-                                    <div className="col-span-8 space-y-4">
+                                <div className="grid grid-cols-12 gap-6">
+                                    <div className="col-span-8 space-y-6">
                                         {['迎え', '送り'].map(type => (
-                                            <div key={type} className="border border-black p-2">
-                                                <div className="font-bold mb-1 underline text-blue-800">■ {type}ルート (住所・曜日は非表示)</div>
-                                                <div className="grid grid-cols-2 gap-2">
-                                                    {cur.v.filter(v=>v.days?.includes(currentDay)).map(v => (
-                                                        <div key={v.id} className="border border-black text-[10px]">
-                                                            <div className="bg-gray-100 p-1 border-b border-black font-bold flex justify-between">
+                                            <div key={type} className="border-2 border-black p-3">
+                                                <div className="font-black text-lg mb-2 underline">■ {type}便 ルート案内</div>
+                                                <div className="grid grid-cols-2 gap-4">
+                                                    {db.v.filter(v=>v.days?.includes(currentDay)).map(v => (
+                                                        <div key={v.id} className="border-2 border-black">
+                                                            <div className="bg-slate-800 text-white p-2 font-bold flex justify-between">
                                                                 <span>車:{v.name}</span>
-                                                                <span>運:<select className="w-12"><option>-</option>{cur.s.filter(s=>s.days?.includes(currentDay)).map(s=><option key={s.id}>{s.name}</option>)}</select></span>
-                                                                <span>添:<select className="w-12"><option>-</option>{cur.s.filter(s=>s.days?.includes(currentDay)).map(s=><option key={s.id}>{s.name}</option>)}</select></span>
+                                                                <span className="text-[10px]">運:_____ 添:_____</span>
                                                             </div>
-                                                            <table className="w-full">
-                                                                {(cur.r[selectedDate]?.[type]?.[v.name] || Array(6).fill({time:'',name:''})).map((row, i) => (
-                                                                    <tr key={i} className="h-6 text-center border-b"><td className="w-10 border-r">{row.time}</td><td>{row.name}</td></tr>
+                                                            <table>
+                                                                {(db.r[selectedDate]?.[type]?.[v.name] || Array(6).fill({time:'',name:''})).map((row, i) => (
+                                                                    <tr key={i} className="h-8 text-center border-b border-black"><td className="w-12 border-r-2 border-black bg-slate-50">{row.time}</td><td className="text-sm">{row.name}</td></tr>
                                                                 ))}
                                                             </table>
                                                         </div>
@@ -142,63 +141,13 @@
                                             </div>
                                         ))}
                                     </div>
-                                    <div className="col-span-4 border border-black p-1 bg-slate-50">
-                                        <div className="text-center font-bold bg-indigo-50 py-1 mb-1 border-b border-black text-xs font-black">出欠・特記状況</div>
+                                    <div className="col-span-4 border-2 border-black p-2 bg-yellow-50">
+                                        <div className="text-center font-black bg-black text-white py-2 mb-2 text-sm uppercase">出欠・特記事項</div>
                                         <table className="w-full">
-                                            <thead><tr className="bg-gray-200"><th>利用者名</th><th>学校</th><th>特記/理由等</th></tr></thead>
+                                            <thead><tr className="bg-slate-200 text-[10px]"><th>氏名</th><th>学校</th><th>特記</th></tr></thead>
                                             <tbody>
-                                                {cur.u.filter(u => u.group?.includes(currentDay)).map(u => (
-                                                    <tr key={u.id} className="h-8 border-b">
-                                                        <td className="font-bold px-1 text-center bg-white">{u.name}</td>
-                                                        <td className="text-center text-[9px]">{u.school}{u.grade}</td>
-                                                        <td><input value={u.memo || ''} onChange={e=>updateCur('u', cur.u.map(x=>x.id===u.id?{...x, memo:e.target.value}:x))} className="text-[9px] w-full" /></td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-
-                        {activeTab === 'users' && (
-                            <div className="bg-white p-4 border rounded shadow">
-                                <div className="flex justify-between mb-4 items-center">
-                                    <h2 className="font-bold text-lg text-indigo-800">利用者名簿（ひらがな除去済み）</h2>
-                                    <label className="bg-green-700 text-white px-4 py-2 rounded cursor-pointer font-bold shadow hover:bg-green-600">
-                                        CSV読込 (漢字のみ抽出)
-                                        <input type="file" onChange={handleCsv} className="hidden" />
-                                    </label>
-                                </div>
-                                <table className="w-full text-[10px]">
-                                    <thead className="bg-gray-100"><tr><th>氏名(漢字)</th><th>利用曜日</th><th>学校</th><th>学年</th><th>操作</th></tr></thead>
-                                    <tbody>
-                                        {cur.u.map(u => (
-                                            <tr key={u.id} className="border-b">
-                                                <td><input value={u.name} onChange={e=>updateCur('u', cur.u.map(x=>x.id===u.id?{...x, name:e.target.value}:x))} className="font-bold" /></td>
-                                                <td><input value={u.group} onChange={e=>updateCur('u', cur.u.map(x=>x.id===u.id?{...x, group:e.target.value}:x))} className="bg-yellow-50" /></td>
-                                                <td><input value={u.school} onChange={e=>updateCur('u', cur.u.map(x=>x.id===u.id?{...x, school:e.target.value}:x))} /></td>
-                                                <td><input value={u.grade} onChange={e=>updateCur('u', cur.u.map(x=>x.id===u.id?{...x, grade:e.target.value}:x))} /></td>
-                                                <td className="text-center"><button onClick={()=>updateCur('u', cur.u.filter(x=>x.id!==u.id))} className="text-red-500">削除</button></td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        )}
-
-                        {activeTab === 'staff' && (
-                            <div className="grid grid-cols-2 gap-4 text-xs font-bold">
-                                <div className="bg-white p-4 border rounded shadow">
-                                    <h3 className="mb-4 border-l-4 border-indigo-600 pl-2">職員 (出勤曜日)</h3>
-                                    <button onClick={()=>updateCur('s', [...cur.s,{id:Date.now(),name:"新規",days:[]}])} className="bg-slate-200 px-3 py-1 rounded mb-4">+ 追加</button>
-                                    {cur.s.map(s => <div key={s.id} className="flex justify-between mb-2 p-1 border-b">
-                                        <input value={s.name} onChange={e=>updateCur('s', cur.s.map(x=>x.id===s.id?{...x, name:e.target.value}:x))} className="w-20" />
-                                        <div className="flex gap-1">{["月","火","水","木","金","土"].map(d => <button key={d} className={`w-6 h-6 border rounded ${s.days?.includes(d)?'day-on':''}`} onClick={()=>{const nd=s.days?.includes(d)?s.days.filter(x=>x!==d):[...(s.days||[]),d]; updateCur('s',cur.s.map(x=>x.id===s.id?{...x, days:nd}:x))}}>{d}</button>)}</div>
-                                    </div>)}
-                                </div>
-                                <div className="bg-white p-4 border rounded shadow">
-                                    <h3 className="mb-4 border-l-4 border-orange-600 pl-2">車両 (稼働曜日)</h3>
-                                    <button onClick={()=>updateCur('v', [...cur.v,{id:Date.now(),name:"新車",days:[]}])} className="bg-slate-200 px-3 py-1 rounded mb-4">+ 追加</button>
-                                    {cur.v.map(v => <div key={v.id} className="flex justify-between mb-2 p-1 border-b">
-                                        <input value={v.name} onChange={e=>updateCur('v', cur.v.map(x=>x.
+                                                {db.u.filter(u => u.group.includes(currentDay)).map(u => (
+                                                    <tr key={u.id} className="h-9 border-b border-black bg-white text-center">
+                                                        <td className="font-black text-sm">{u.name}</td>
+                                                        <td className="text-[9px]">{u.school}</td>
+                                                        <td><input className="
