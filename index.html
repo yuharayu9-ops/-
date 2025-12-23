@@ -2,10 +2,10 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>SHOJIN 送迎管理システム v1.7</title>
+    <title>SHOJIN 送迎管理システム v1.8</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        body { font-family: "Helvetica Neue", Arial, sans-serif; background: #f1f5f9; font-size: 11px; color: #1e293b; }
+        body { font-family: "Helvetica Neue", Arial, sans-serif; background: #f8fafc; font-size: 11px; }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
         .tab-btn.active { border-bottom: 4px solid #1e40af; color: #1e40af; font-weight: bold; background: white; }
@@ -13,30 +13,32 @@
         th, td { border: 1px solid black; padding: 4px; text-align: center; }
         .day-on { background: #1e40af !important; color: white !important; }
         input[type="text"], input[type="number"], select { width: 100%; border: none; font-size: 11px; background: transparent; text-align: center; }
-        .critical { color: #dc2626; font-weight: bold; background: #fef2f2; }
+        .critical { color: red; font-weight: bold; background: #fef2f2; }
         @media print { .no-print { display: none !important; } body { background: white; } .max-w-5xl { width: 100%; max-width: none; border:none; } }
     </style>
 </head>
 <body class="min-h-screen flex flex-col">
 
 <script type="module">
-    // データ初期化
-    const emptyState = {
+    // 起動時のエラーを防ぐための初期設定
+    const STORAGE_KEY = 'shojin_v180';
+    const initData = {
         curId: 'off1',
         off1: { name: "星の村", u:[], v:[], s:[], r:{} },
         off2: { name: "プリズム", u:[], v:[], s:[], r:{} },
         off3: { name: "カラフル", u:[], v:[], s:[], r:{} }
     };
-    window.state = JSON.parse(localStorage.getItem('shojin_v170')) || emptyState;
+
+    window.state = JSON.parse(localStorage.getItem(STORAGE_KEY)) || initData;
 
     window.save = () => {
-        localStorage.setItem('shojin_v170', JSON.stringify(window.state));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(window.state));
         window.render();
     };
 
     const getDayStr = (d) => ["日","月","火","水","木","金","土"][new Date(d).getDay()];
 
-    // CSV読込：1列目が数字の行のみを「利用者」として抽出
+    // CSV読込：1列目が数字の行だけを「利用者」として抽出
     window.handleCsv = (e) => {
         const file = e.target.files[0];
         if (!file) return;
@@ -48,23 +50,22 @@
             lines.forEach(line => {
                 if (!line.trim()) return;
                 const c = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(s => s.replace(/^"|"$/g, '').trim());
-                
-                // 1列目が「1, 2, 3...」という数字で始まる行だけを処理
+                // PDFの1列目（No）が数字である行だけを読み込む
                 if (/^\d+$/.test(c[0])) {
                     cur.u.push({
                         id: 'U' + Math.random().toString(36).substr(2, 9),
-                        order: c[0],           // 1列目: No
-                        name: c[1] || "",      // 2列目: 氏名
-                        school: c[2] || "",    // 3列目: 学校名
-                        grade: c[3] || "",     // 4列目: 学年
-                        alert: c[5] || "",     // 6列目: アレルギー/重要事項
-                        group: "月火水木金土"    // デフォルトは全曜日
+                        order: c[0],           // No
+                        name: c[1] || "",      // 氏名
+                        school: c[2] || "",    // 学校
+                        grade: c[3] || "",     // 学年
+                        alert: c[5] || "",     // アレルギー
+                        group: "月火水木金土"    // 稼働日
                     });
                     count++;
                 }
             });
             window.save();
-            alert(count + "名の利用者を読み込みました。");
+            alert(count + "名のデータを読み込みました。次は「職員・車両」を設定してください。");
         };
         reader.readAsText(file, 'Shift-JIS');
     };
@@ -76,7 +77,7 @@
         const activeV = cur.v.filter(v => v.days.includes(day));
         const activeU = cur.u.filter(u => u.group.includes(day));
 
-        if (!activeV.length) return alert("「車両設定」で、今日(" + day + ")稼働する車にチェックを入れてください。");
+        if (!activeV.length) return alert("車両設定で、今日(" + day + ")稼働する車にチェックを付けてください。");
         activeU.sort((a, b) => (parseInt(a.order) - parseInt(b.order)));
 
         cur.r[date] = { "迎え": {}, "送り": {} };
@@ -84,8 +85,8 @@
 
         activeU.forEach((user, index) => {
             const vName = activeV[index % activeV.length].name;
-            cur.r[date]["迎え"][vName].push({ time: "10:00", name: user.name });
-            cur.r[date]["送り"][vName].push({ time: "16:00", name: user.name });
+            cur.r[date]["迎え"][vName].push({ time: "14:00", name: user.name });
+            cur.r[date]["送り"][vName].push({ time: "17:00", name: user.name });
         });
         window.save();
     };
@@ -94,33 +95,12 @@
         const cur = window.state[window.state.curId];
         const date = document.getElementById('dateInput').value;
         const day = getDayStr(date);
-        document.getElementById('officeTitle').innerText = cur.name;
+        
+        // 職員プルダウン
+        const staffOpts = `<option value="">-</option>` + cur.s.filter(s=>s.days.includes(day)).map(s=>`<option value="${s.name}">${s.name}</option>`).join('');
 
-        // 職員プルダウン（今日稼働する人のみ）
-        const staffOpts = `<option value="">-未選択-</option>` + cur.s.filter(s=>s.days.includes(day)).map(s=>`<option value="${s.name}">${s.name}</option>`).join('');
-
+        // 運行表
         ['迎え', '送り'].forEach(type => {
             const area = document.getElementById(type + 'Area');
             const vehicles = cur.v.filter(v => v.days.includes(day));
-            area.innerHTML = vehicles.map(v => `
-                <div class="mb-4 border-2 border-black">
-                    <table class="w-full text-[10px] bg-slate-50">
-                        <tr class="h-8">
-                            <td class="w-12 bg-slate-800 text-white font-bold">運転</td>
-                            <td class="w-24 border-r-2 border-black"><select class="font-bold">${staffOpts}</select></td>
-                            <td class="w-12 bg-slate-600 text-white italic">車名</td>
-                            <td class="font-black text-blue-800 text-[12px] bg-white">${v.name}</td>
-                        </tr>
-                        <tr class="h-8 border-t border-black">
-                            <td class="bg-slate-700 text-white font-bold">添乗</td>
-                            <td class="border-r-2 border-black"><select class="font-bold">${staffOpts}</select></td>
-                            <td class="bg-slate-200 font-bold">種別</td>
-                            <td class="bg-white">${type}</td>
-                        </tr>
-                    </table>
-                    <table class="w-full border-t border-black">
-                        <thead><tr class="bg-gray-100 text-[9px] h-5"><th>時刻</th><th>利用者氏名</th></tr></thead>
-                        ${(cur.r[date]?.[type]?.[v.name] || Array(8).fill({time:'',name:''})).map(row => `
-                            <tr class="h-8 border-t border-gray-300">
-                                <td class="w-16 border-r font-bold bg-white"><input type="text" value="${row.time}"></td>
-                                <td class="text-
+            area.innerHTML
