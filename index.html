@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>放課後等デイサービス 送迎管理</title>
+    <title>放課後等デイサービス 送迎管理システム</title>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -11,6 +11,7 @@
     <style>
         body { font-family: sans-serif; background-color: #f8fafc; }
         @media print { .no-print { display: none !important; } .sheet { border: 2px solid black !important; width: 100% !important; margin: 0 !important; padding: 10px !important; } }
+        .tab-active { border-bottom: 3px solid #4f46e5; color: #4f46e5; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -27,30 +28,30 @@
 
         function App() {
             const [activeTab, setActiveTab] = useState('users');
+            const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+            
+            // データ状態
             const [users, setUsers] = useState(() => JSON.parse(localStorage.getItem('hp_users') || '[]'));
             const [staff, setStaff] = useState(() => JSON.parse(localStorage.getItem('hp_staff') || '[]'));
             const [vehicles, setVehicles] = useState(() => JSON.parse(localStorage.getItem('hp_vehicles') || '[]'));
-            const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+            const [scheduleItems, setScheduleItems] = useState(() => JSON.parse(localStorage.getItem('hp_sched') || '[]'));
 
             const weekdays = ["日", "月", "火", "水", "木", "金", "土"];
+            const currentDay = weekdays[new Date(selectedDate).getDay()];
 
             useEffect(() => {
                 localStorage.setItem('hp_users', JSON.stringify(users));
                 localStorage.setItem('hp_staff', JSON.stringify(staff));
                 localStorage.setItem('hp_vehicles', JSON.stringify(vehicles));
-            }, [users, staff, vehicles]);
+                localStorage.setItem('hp_sched', JSON.stringify(scheduleItems));
+            }, [users, staff, vehicles, scheduleItems]);
 
-            // 文字列の掃除（ひらがな削除、引用符削除）
-            const cleanText = (text) => {
-                if (!text) return "";
-                return text.replace(/"/g, '') // ダブルクォーテーション削除
-                           .replace(/[ぁ-ん]/g, '') // ひらがな削除
-                           .trim();
-            };
+            // 文字列掃除
+            const clean = (t) => t ? t.replace(/"/g, '').replace(/[ぁ-ん]/g, '').trim() : "";
 
+            // CSVインポート
             const handleCsv = (e) => {
                 const file = e.target.files[0];
-                if (!file) return;
                 const reader = new FileReader();
                 reader.onload = (ev) => {
                     const lines = ev.target.result.split('\n').slice(1);
@@ -58,10 +59,12 @@
                         const c = l.split(',');
                         return { 
                             id: Date.now() + i, 
-                            name: cleanText(c[0]), 
-                            school: cleanText(c[3]), 
-                            group: cleanText(c[2]),
-                            grade: cleanText(c[4])
+                            name: clean(c[0]), 
+                            address: clean(c[1]),
+                            group: c[2] || "", // 曜日はそのまま保持
+                            school: clean(c[3]), 
+                            grade: clean(c[4]),
+                            notes: "" // 特記は空で作成
                         };
                     });
                     setUsers([...users, ...newUsers]);
@@ -69,34 +72,69 @@
                 reader.readAsText(file, 'Shift-JIS');
             };
 
+            // 出欠切り替え
+            const toggleAttendance = (userId) => {
+                const key = `${selectedDate}_${userId}`;
+                setScheduleItems(prev => {
+                    const current = prev.find(i => i.key === key);
+                    if (current) {
+                        return prev.map(i => i.key === key ? { ...i, absent: !i.absent } : i);
+                    }
+                    return [...prev, { key, userId, date: selectedDate, absent: true }];
+                });
+            };
+
+            // 曜日チェックボックス用
+            const toggleDay = (list, id, day, setter) => {
+                setter(list.map(item => {
+                    if (item.id === id) {
+                        const days = item.days || [];
+                        const newDays = days.includes(day) ? days.filter(d => d !== day) : [...days, day];
+                        return { ...item, days: newDays };
+                    }
+                    return item;
+                }));
+            };
+
             return (
                 <div className="min-h-screen flex flex-col">
-                    <header className="bg-indigo-700 text-white p-4 no-print flex justify-between items-center shadow-md">
-                        <h1 className="font-bold text-lg">送迎管理システム</h1>
-                        <input type="date" className="text-black px-2 py-1 rounded text-sm" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} />
+                    <header className="bg-indigo-800 text-white p-4 no-print flex justify-between items-center shadow-lg">
+                        <h1 className="font-bold text-xl">放デイ送迎管理システム</h1>
+                        <div className="flex gap-4">
+                            <input type="date" className="text-black px-3 py-1 rounded" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} />
+                            <button onClick={() => window.print()} className="bg-green-600 px-4 py-1 rounded font-bold text-sm">印刷</button>
+                        </div>
                     </header>
                     
-                    <nav className="flex bg-white border-b no-print shadow-sm">
-                        {['users', 'staff', 'vehicles', 'schedule'].map((t) => (
-                            <button key={t} onClick={() => setActiveTab(t)} className={`px-6 py-3 text-sm font-bold ${activeTab === t ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-gray-500'}`}>
-                                {t === 'users' ? '利用者管理' : t === 'staff' ? '職員管理' : t === 'vehicles' ? '車両管理' : '送迎表'}
-                            </button>
+                    <nav className="flex bg-white border-b no-print shadow-sm overflow-x-auto">
+                        {[
+                            {id:'users', n:'利用者管理'}, {id:'staff', n:'職員管理'}, {id:'vehicles', n:'車両管理'}, {id:'schedule', n:'送迎表作成'}
+                        ].map(t => (
+                            <button key={t.id} onClick={() => setActiveTab(t.id)} className={`px-6 py-4 text-sm whitespace-nowrap ${activeTab === t.id ? 'tab-active' : 'text-gray-500'}`}>{t.n}</button>
                         ))}
                     </nav>
 
                     <main className="p-6 flex-1">
                         {/* 利用者管理 */}
                         {activeTab === 'users' && (
-                            <div className="bg-white p-6 rounded-lg shadow-sm border">
+                            <div className="bg-white p-6 rounded-xl shadow border">
                                 <div className="flex justify-between mb-4">
                                     <h2 className="font-bold text-xl">利用者名簿</h2>
-                                    <label className="bg-emerald-600 text-white px-4 py-2 rounded-md cursor-pointer text-sm font-bold">CSV読込<input type="file" onChange={handleCsv} className="hidden" accept=".csv" /></label>
+                                    <label className="bg-emerald-600 text-white px-4 py-2 rounded cursor-pointer text-sm font-bold">CSV読込<input type="file" onChange={handleCsv} className="hidden" accept=".csv" /></label>
                                 </div>
                                 <table className="w-full text-sm">
-                                    <thead><tr className="border-b bg-gray-50"><th className="p-2">氏名</th><th className="p-2">学校</th><th className="p-2">曜日</th><th className="p-2">操作</th></tr></thead>
+                                    <thead><tr className="bg-gray-100 border-b">
+                                        <th className="p-2 text-left">名前</th><th className="p-2 text-left">学年</th><th className="p-2 text-left">曜日</th><th className="p-2 text-left">アレルギー等特記</th><th className="p-2">操作</th>
+                                    </tr></thead>
                                     <tbody>
                                         {users.map(u => (
-                                            <tr key={u.id} className="border-b"><td className="p-2 font-bold">{u.name}</td><td className="p-2">{u.school}</td><td className="p-2">{u.group}</td><td className="p-2"><button onClick={() => setUsers(users.filter(x => x.id !== u.id))} className="text-red-500">削除</button></td></tr>
+                                            <tr key={u.id} className="border-b">
+                                                <td className="p-2 font-bold">{u.name}</td>
+                                                <td className="p-2 text-xs">{u.grade}</td>
+                                                <td className="p-2 text-xs text-blue-600">{u.group}</td>
+                                                <td className="p-2"><input className="border w-full p-1 rounded text-xs" value={u.notes} onChange={e => setUsers(users.map(x => x.id === u.id ? {...x, notes: e.target.value} : x))} placeholder="特記記入..." /></td>
+                                                <td className="p-2 text-center"><button onClick={() => setUsers(users.filter(x => x.id !== u.id))} className="text-red-500 text-xs">削除</button></td>
+                                            </tr>
                                         ))}
                                     </tbody>
                                 </table>
@@ -105,20 +143,27 @@
 
                         {/* 職員管理 */}
                         {activeTab === 'staff' && (
-                            <div className="bg-white p-6 rounded-lg shadow-sm border">
-                                <h2 className="font-bold text-xl mb-4">職員登録</h2>
+                            <div className="bg-white p-6 rounded-xl shadow border">
+                                <h2 className="font-bold text-xl mb-4">職員・勤務曜日設定</h2>
                                 <div className="flex gap-2 mb-6">
-                                    <input id="staffName" className="border p-2 rounded w-64" placeholder="職員名" />
+                                    <input id="sn" className="border p-2 rounded w-64" placeholder="職員名を入力" />
                                     <button onClick={() => {
-                                        const name = document.getElementById('staffName').value;
-                                        if(name) { setStaff([...staff, {id: Date.now(), name}]); document.getElementById('staffName').value = ''; }
-                                    }} className="bg-indigo-600 text-white px-4 py-2 rounded">追加</button>
+                                        const n = document.getElementById('sn').value;
+                                        if(n) { setStaff([...staff, {id:Date.now(), name:n, days:[]}]); document.getElementById('sn').value=''; }
+                                    }} className="bg-indigo-600 text-white px-6 py-2 rounded font-bold">追加</button>
                                 </div>
-                                <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-4">
                                     {staff.map(s => (
-                                        <div key={s.id} className="border p-4 rounded flex justify-between items-center bg-gray-50">
-                                            <span className="font-bold">{s.name}</span>
-                                            <button onClick={() => setStaff(staff.filter(x => x.id !== s.id))} className="text-red-500 text-sm">削除</button>
+                                        <div key={s.id} className="border p-4 rounded-lg bg-gray-50 flex items-center justify-between">
+                                            <span className="font-bold w-32">{s.name}</span>
+                                            <div className="flex gap-2">
+                                                {weekdays.map(d => (
+                                                    <label key={d} className={`px-2 py-1 rounded text-xs cursor-pointer border ${s.days?.includes(d) ? 'bg-indigo-600 text-white' : 'bg-white'}`}>
+                                                        <input type="checkbox" className="hidden" checked={s.days?.includes(d)} onChange={() => toggleDay(staff, s.id, d, setStaff)} /> {d}
+                                                    </label>
+                                                ))}
+                                            </div>
+                                            <button onClick={() => setStaff(staff.filter(x => x.id !== s.id))} className="text-red-500 ml-4">削除</button>
                                         </div>
                                     ))}
                                 </div>
@@ -127,22 +172,29 @@
 
                         {/* 車両管理 */}
                         {activeTab === 'vehicles' && (
-                            <div className="bg-white p-6 rounded-lg shadow-sm border">
-                                <h2 className="font-bold text-xl mb-4">車両登録</h2>
-                                <div className="flex gap-2 mb-6">
-                                    <input id="vName" className="border p-2 rounded w-64" placeholder="車両名" />
-                                    <input id="vCap" type="number" className="border p-2 rounded w-20" placeholder="定員" />
+                            <div className="bg-white p-6 rounded-xl shadow border">
+                                <h2 className="font-bold text-xl mb-4">車両・稼働曜日設定</h2>
+                                <div className="flex gap-2 mb-6 text-sm">
+                                    <input id="vn" className="border p-2 rounded" placeholder="車両名" />
+                                    <input id="vc" type="number" className="border p-2 rounded w-20" placeholder="定員" />
                                     <button onClick={() => {
-                                        const name = document.getElementById('vName').value;
-                                        const cap = document.getElementById('vCap').value;
-                                        if(name) { setVehicles([...vehicles, {id: Date.now(), name, cap}]); document.getElementById('vName').value = ''; }
-                                    }} className="bg-indigo-600 text-white px-4 py-2 rounded">追加</button>
+                                        const n = document.getElementById('vn').value;
+                                        const c = document.getElementById('vc').value;
+                                        if(n) { setVehicles([...vehicles, {id:Date.now(), name:n, cap:c, days:[]}]); document.getElementById('vn').value=''; }
+                                    }} className="bg-indigo-600 text-white px-6 py-2 rounded font-bold">車両追加</button>
                                 </div>
-                                <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-4">
                                     {vehicles.map(v => (
-                                        <div key={v.id} className="border p-4 rounded flex justify-between items-center bg-gray-50">
-                                            <span><span className="font-bold">{v.name}</span> (定員:{v.cap}名)</span>
-                                            <button onClick={() => setVehicles(vehicles.filter(x => x.id !== v.id))} className="text-red-500 text-sm">削除</button>
+                                        <div key={v.id} className="border p-4 rounded-lg bg-gray-50 flex items-center justify-between">
+                                            <span className="font-bold w-48">{v.name} ({v.cap}名)</span>
+                                            <div className="flex gap-2">
+                                                {weekdays.map(d => (
+                                                    <label key={d} className={`px-2 py-1 rounded text-xs cursor-pointer border ${v.days?.includes(d) ? 'bg-indigo-600 text-white' : 'bg-white'}`}>
+                                                        <input type="checkbox" className="hidden" checked={v.days?.includes(d)} onChange={() => toggleDay(vehicles, v.id, d, setVehicles)} /> {d}
+                                                    </label>
+                                                ))}
+                                            </div>
+                                            <button onClick={() => setVehicles(vehicles.filter(x => x.id !== v.id))} className="text-red-500 ml-4">削除</button>
                                         </div>
                                     ))}
                                 </div>
@@ -151,29 +203,23 @@
 
                         {/* 送迎表 */}
                         {activeTab === 'schedule' && (
-                            <div className="sheet bg-white p-8 border-2 border-black min-h-[800px]">
-                                <h2 className="text-center font-bold text-2xl mb-6 underline">送迎表 ({selectedDate})</h2>
-                                <div className="grid grid-cols-12 gap-6">
-                                    <div className="col-span-8 border-2 border-black p-4 min-h-[500px]">
-                                        <span className="font-bold">【運行ルート】</span>
-                                        <div className="mt-10 text-center text-gray-400 no-print">
-                                            <button className="bg-indigo-600 text-white px-6 py-2 rounded-full font-bold shadow-lg">AIで送迎ルートを作成</button>
-                                        </div>
-                                    </div>
-                                    <div className="col-span-4 border-2 border-black p-2">
-                                        <p className="font-bold text-center bg-gray-100 border-b-2 border-black mb-2">本日利用の皆様</p>
-                                        {users.map(u => <div key={u.id} className="border-b py-1 text-sm flex justify-between"><span>{u.name}</span><span className="font-bold text-xs border px-1">出欠</span></div>)}
-                                    </div>
+                            <div className="sheet bg-white p-8 border-2 border-black min-h-[1000px] shadow-2xl">
+                                <div className="flex justify-between border-b-4 border-black mb-6 pb-2 items-end">
+                                    <h2 className="text-3xl font-black">送迎表 ({selectedDate} / {currentDay})</h2>
+                                    <div className="text-sm font-bold">事業所名: ____________________</div>
                                 </div>
-                            </div>
-                        )}
-                    </main>
-                </div>
-            );
-        }
-
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
-    </script>
-</body>
-</html>
+                                
+                                <div className="grid grid-cols-12 gap-6">
+                                    <div className="col-span-8 space-y-4">
+                                        <div className="border-4 border-black p-4 min-h-[600px] relative">
+                                            <h3 className="font-black border-b-2 border-black mb-4 flex justify-between">
+                                                <span>【 運行計画 】</span>
+                                                <button className="no-print bg-indigo-600 text-white text-xs px-4 py-1 rounded-full mb-1">AI自動ルート作成</button>
+                                            </h3>
+                                            
+                                            {/* 当日の稼働車両のみ表示 */}
+                                            <div className="grid grid-cols-2 gap-4">
+                                                {vehicles.filter(v => v.days?.includes(currentDay)).map(v => (
+                                                    <div key={v.id} className="border-2 border-black p-2 h-64 relative">
+                                                        <div className="bg-black text-white text-[10px] px-2 py-1 mb-2 flex justify-between">
+                                                            <span>車: {v.name}</span>
