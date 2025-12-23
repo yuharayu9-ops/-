@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>送迎管理システム - 星の村・完全修正版</title>
+    <title>星の村 送迎管理システム</title>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -22,72 +22,70 @@
     <script type="text/babel">
         const { useState, useEffect } = React;
 
-        // ★ここにAPIキー(AIza...)を貼り付けてください
+        // ★ここにAPIキー(AIza...)を貼り付け
         const GEMINI_API_KEY = "AIzaSyBXdJEj9HchCarhQd_RSSDo_hgEvxOYQq8"; 
 
         function App() {
             const [activeTab, setActiveTab] = useState('schedule');
             const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
             const [loading, setLoading] = useState(false);
+            const [curId, setCurId] = useState('off1'); // 3事業所の切り替え用
             const [db, setDb] = useState(() => {
-                const saved = localStorage.getItem('star_village_vfinal');
-                return saved ? JSON.parse(saved) : { u:[], s:[], v:[], r:{} };
+                const saved = localStorage.getItem('star_village_vfinal_multi');
+                return saved ? JSON.parse(saved) : { 
+                    off1: { name: "星の村 第1", u:[], s:[], v:[], r:{} },
+                    off2: { name: "星の村 第2", u:[], s:[], v:[], r:{} },
+                    off3: { name: "星の村 第3", u:[], s:[], v:[], r:{} }
+                };
             });
 
-            useEffect(() => { localStorage.setItem('star_village_vfinal', JSON.stringify(db)); }, [db]);
+            useEffect(() => { localStorage.setItem('star_village_vfinal_multi', JSON.stringify(db)); }, [db]);
 
+            const cur = db[curId] || { name: "事業所", u:[], s:[], v:[], r:{} };
             const currentDay = ["日","月","火","水","木","金","土"][new Date(selectedDate).getDay()];
+
+            // データの更新用
+            const updateCur = (key, val) => {
+                setDb(prev => ({ ...prev, [curId]: { ...prev[curId], [key]: val } }));
+            };
 
             const handleCsv = (e) => {
                 const reader = new FileReader();
                 reader.onload = (ev) => {
-                    // CSVの全行を取得し、空行を飛ばす
-                    const lines = ev.target.result.split(/\r\n|\n/).filter(line => line.trim());
-                    // 1行目のヘッダー（利用者名...）を飛ばす
-                    const dataRows = lines.slice(1);
-
+                    const lines = ev.target.result.split(/\r\n|\n/).filter(l => l.trim());
+                    const dataRows = lines.slice(1); // ヘッダー飛ばし
                     const parsed = dataRows.map((row, i) => {
-                        // カンマで分割。引用符内の改行等に強い分割方法
-                        const c = row.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g) || [];
-                        const clean = (str) => str ? str.replace(/^"|"$/g, '').trim() : "";
-
-                        // セル内の「ひらがな＋改行」を消して漢字だけにする（最後の行が漢字であることを利用）
-                        const rawName = clean(c[0]);
-                        const nameParts = rawName.split(/[\n\r]+/);
-                        const kanjiName = nameParts[nameParts.length - 1]; // 最後の1行（漢字）を取得
-
+                        const c = row.split(',').map(v => v.trim().replace(/^"|"$/g, ''));
+                        // ★名前セル内の「ひらがな＋改行」を掃除して漢字だけにする
+                        const nameParts = (c[0] || "").split(/[\n\r]+/);
+                        const kanjiName = nameParts[nameParts.length - 1]; 
                         return { 
-                            id: Date.now() + i,
+                            id: Date.now() + i, 
                             name: kanjiName || "名前なし",
-                            group: clean(c[1]), // 曜日（例：火曜　星の村）
-                            school: clean(c[3]), 
-                            grade: clean(c[4]), 
-                            memo: ""
+                            group: c[1] || "", school: c[3] || "", grade: c[4] || "", memo: ""
                         };
                     }).filter(u => u.name !== "名前なし");
-
-                    setDb(prev => ({...prev, u: [...prev.u, ...parsed]}));
-                    alert(`${parsed.length}名のデータを読み込みました。漢字名のみ抽出しました。`);
+                    updateCur('u', [...cur.u, ...parsed]);
+                    alert(`${parsed.length}名のデータを読み込みました。`);
                 };
                 reader.readAsText(e.target.files[0], 'Shift-JIS');
             };
 
             const runAI = async () => {
-                if (!GEMINI_API_KEY || GEMINI_API_KEY === "ここに貼り付け") return alert("APIキーを入力してください。");
-                const activeU = db.u.filter(u => u.group.includes(currentDay));
-                const activeV = db.v.filter(v => v.days?.includes(currentDay));
-                if (activeU.length === 0 || activeV.length === 0) return alert("本日の利用者、または稼働車両がありません。");
-
+                if (!GEMINI_API_KEY || GEMINI_API_KEY === "ここに貼り付け") return alert("APIキーを設定してください。");
+                const activeU = cur.u.filter(u => u.group.includes(currentDay));
+                const activeV = cur.v.filter(v => v.days?.includes(currentDay));
+                if (activeU.length === 0 || activeV.length === 0) return alert("本日の利用者、または車両がありません。");
                 setLoading(true);
                 try {
-                    const prompt = `${activeV.map(v=>v.name)}で${activeU.map(u=>u.name)}を送迎。JSON形式で: {"迎え":{"車名":[{"time":"14:00","name":"名前"}]},"送り":{"車名":[{"time":"17:00","name":"名前"}]}}`;
+                    const prompt = `${activeV.map(v=>v.name)}で${activeU.map(u=>u.name)}の送迎表をJSONで作成。{"迎え":{"車名":[{"time":"14:00","name":"名前"}]},"送り":{"車名":[{"time":"17:00","name":"名前"}]}}`;
                     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
                         method: 'POST', headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
                     });
                     const data = await res.json();
                     const aiResult = JSON.parse(data.candidates[0].content.parts[0].text.replace(/```json|```/g, '').trim());
-                    setDb(prev => ({...prev, r: { ...prev.r, [selectedDate]: aiResult }}));
+                    updateCur('r', { ...cur.r, [selectedDate]: aiResult });
                 } catch (e) { alert("AIエラー。車両と利用者の登録を確認してください。"); }
                 setLoading(false);
             };
@@ -95,59 +93,28 @@
             return (
                 <div className="min-h-screen flex flex-col">
                     <header className="bg-indigo-900 text-white p-4 no-print flex justify-between items-center shadow-xl">
-                        <h1 className="text-xl font-black">星の村 送迎管理システム</h1>
-                        <div className="flex gap-3">
-                            <input type="date" value={selectedDate} onChange={e=>setSelectedDate(e.target.value)} className="text-black p-2 rounded font-bold" />
-                            <button onClick={runAI} className="bg-orange-500 px-6 py-2 rounded-full font-black hover:bg-orange-400 shadow-lg">
-                                {loading ? "AI計算中..." : "AI送迎ルート作成"}
-                            </button>
-                            <button onClick={()=>window.print()} className="bg-white text-indigo-900 px-6 py-2 rounded-full font-black">印刷</button>
+                        <div className="flex items-center gap-4">
+                            <h1 className="text-xl font-black">星の村 送迎管理</h1>
+                            <select value={curId} onChange={e=>setCurId(e.target.value)} className="bg-white text-indigo-900 font-bold p-1 rounded">
+                                <option value="off1">第1事業所</option>
+                                <option value="off2">第2事業所</option>
+                                <option value="off3">第3事業所</option>
+                            </select>
+                        </div>
+                        <div className="flex gap-2">
+                            <input type="date" value={selectedDate} onChange={e=>setSelectedDate(e.target.value)} className="text-black p-1 rounded font-bold" />
+                            <button onClick={runAI} className="bg-orange-500 px-4 py-1 rounded font-black hover:bg-orange-400">{loading ? "作成中..." : "AI送迎作成"}</button>
+                            <button onClick={()=>window.print()} className="bg-white text-indigo-900 px-4 py-1 rounded font-black">印刷</button>
                         </div>
                     </header>
 
-                    <nav className="flex bg-slate-200 no-print">
-                        <button onClick={()=>setActiveTab('schedule')} className={`flex-1 py-4 text-sm ${activeTab==='schedule'?'tab-active':''}`}>送迎計画表</button>
-                        <button onClick={()=>setActiveTab('users')} className={`flex-1 py-4 text-sm ${activeTab==='users'?'tab-active':''}`}>利用者名簿 (ひらがな除去済)</button>
-                        <button onClick={()=>setActiveTab('staff')} className={`flex-1 py-4 text-sm ${activeTab==='staff'?'tab-active':''}`}>職員・車両設定</button>
+                    <nav className="flex bg-slate-200 no-print border-b-2 border-slate-300">
+                        <button onClick={()=>setActiveTab('schedule')} className={`flex-1 py-3 text-xs ${activeTab==='schedule'?'tab-active':''}`}>送迎計画表</button>
+                        <button onClick={()=>setActiveTab('users')} className={`flex-1 py-3 text-xs ${activeTab==='users'?'tab-active':''}`}>名簿 (漢字抽出)</button>
+                        <button onClick={()=>setActiveTab('staff')} className={`flex-1 py-3 text-xs ${activeTab==='staff'?'tab-active':''}`}>職員・車両設定</button>
                     </nav>
 
-                    <main className="p-6 flex-1">
+                    <main className="p-4 flex-1">
                         {activeTab === 'schedule' && (
-                            <div className="bg-white p-8 border-2 border-black max-w-5xl mx-auto shadow-2xl">
-                                <div className="flex justify-between border-b-4 border-black mb-6 pb-2">
-                                    <h2 className="text-4xl font-black italic underline tracking-tighter">送 迎 計 画 表</h2>
-                                    <div className="text-2xl font-bold">{selectedDate} ({currentDay})</div>
-                                </div>
-                                <div className="grid grid-cols-12 gap-6">
-                                    <div className="col-span-8 space-y-6">
-                                        {['迎え', '送り'].map(type => (
-                                            <div key={type} className="border-2 border-black p-3">
-                                                <div className="font-black text-lg mb-2 underline">■ {type}便 ルート案内</div>
-                                                <div className="grid grid-cols-2 gap-4">
-                                                    {db.v.filter(v=>v.days?.includes(currentDay)).map(v => (
-                                                        <div key={v.id} className="border-2 border-black">
-                                                            <div className="bg-slate-800 text-white p-2 font-bold flex justify-between">
-                                                                <span>車:{v.name}</span>
-                                                                <span className="text-[10px]">運:_____ 添:_____</span>
-                                                            </div>
-                                                            <table>
-                                                                {(db.r[selectedDate]?.[type]?.[v.name] || Array(6).fill({time:'',name:''})).map((row, i) => (
-                                                                    <tr key={i} className="h-8 text-center border-b border-black"><td className="w-12 border-r-2 border-black bg-slate-50">{row.time}</td><td className="text-sm">{row.name}</td></tr>
-                                                                ))}
-                                                            </table>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                    <div className="col-span-4 border-2 border-black p-2 bg-yellow-50">
-                                        <div className="text-center font-black bg-black text-white py-2 mb-2 text-sm uppercase">出欠・特記事項</div>
-                                        <table className="w-full">
-                                            <thead><tr className="bg-slate-200 text-[10px]"><th>氏名</th><th>学校</th><th>特記</th></tr></thead>
-                                            <tbody>
-                                                {db.u.filter(u => u.group.includes(currentDay)).map(u => (
-                                                    <tr key={u.id} className="h-9 border-b border-black bg-white text-center">
-                                                        <td className="font-black text-sm">{u.name}</td>
-                                                        <td className="text-[9px]">{u.school}</td>
-                                                        <td><input className="
+                            <div className="bg-white p-6 border-2 border-black max-w-5xl mx-auto shadow-lg">
+                                <div className="flex justify-between border-b-4 border-black mb-4 pb-1">
