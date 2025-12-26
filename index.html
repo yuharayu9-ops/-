@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>SHOJIN 運行管理 v2.4</title>
+    <title>SHOJIN 運行管理 v2.5</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { font-family: sans-serif; background: #f1f5f9; font-size: 11px; }
@@ -19,8 +19,7 @@
 <body class="min-h-screen flex flex-col">
 
 <script type="module">
-    // 過去のエラーを完全に遮断するため、新しいキーを設定
-    const KEY = 'SHOJIN_DATA_V24_FINAL';
+    const KEY = 'SHOJIN_DATA_V25_PERFECT';
     
     const loadState = () => {
         try {
@@ -39,7 +38,7 @@
 
     const getDay = () => ["日","月","火","水","木","金","土"][new Date(document.getElementById('dateInput').value).getDay()];
 
-    // CSV解析エンジン：引用符内の改行を保持し、列を正確に分離する
+    // 高度なCSVパース（引用符内の改行対応）
     function parseCSV(text) {
         const result = [];
         let row = [];
@@ -56,10 +55,7 @@
                 if (char === '"') { inQuote = true; }
                 else if (char === ',') { row.push(col); col = ""; }
                 else if (char === '\r' || char === '\n') {
-                    if (col || row.length > 0) {
-                        row.push(col);
-                        result.push(row);
-                    }
+                    if (col || row.length > 0) { row.push(col); result.push(row); }
                     row = []; col = "";
                     if (char === '\r' && next === '\n') i++;
                 } else { col += char; }
@@ -80,27 +76,39 @@
             let count = 0;
 
             rows.forEach((c, index) => {
-                if (index === 0 || !c[0]) return; // ヘッダー飛ばし
-                
-                // お名前（1列目）：改行（\n）が含まれる場合は「漢字」の方を優先するか、繋げる
-                // 今回は「かな」と「漢字」をスペースで繋げます
-                const cleanName = c[0].replace(/\n/g, ' ');
-                // 曜日（2列目）："月曜" などの文字が含まれているかチェック
-                const days = ["月","火","水","木","金","土"].filter(d => c[1].includes(d)).join('');
+                if (index === 0 || !c[0] || c[0] === "利用者名") return; 
+
+                // --- 1. 名前の整形 (ひらがな行を消して漢字のみに) ---
+                let name = c[0];
+                if (name.includes('\n')) {
+                    // 改行で分割し、2行目（漢字）があればそれを使用、なければ1行目
+                    const parts = name.split('\n').map(s => s.trim());
+                    name = parts[1] || parts[0];
+                }
+
+                // --- 2. 学年の整形 (数字のみなら "小" を付与) ---
+                let grade = (c[4] || "").trim();
+                if (/^[1-6]$/.test(grade)) {
+                    grade = "小" + grade;
+                }
+
+                // --- 3. 曜日判定 ---
+                const groupText = c[1] || "";
+                const days = ["月","火","水","木","金","土"].filter(d => groupText.includes(d)).join('');
 
                 cur.u.push({
                     id: 'U' + Math.random().toString(36).substr(2, 5),
                     order: count + 1,
-                    name: cleanName,
-                    school: c[3] || "", // 4列目：学校
-                    grade: c[4] || "",  // 5列目：学年
-                    alert: "",
+                    name: name,
+                    school: c[3] || "",
+                    grade: grade,
+                    alert: "", 
                     days: days || "月火水木金土"
                 });
                 count++;
             });
             window.save();
-            alert(count + "名のデータを読み込みました。");
+            alert(count + "名のデータを「漢字のみ・学年適正化」して読み込みました。");
         };
         reader.readAsText(file, 'Shift-JIS');
     };
@@ -114,7 +122,7 @@
         if (!vs.length) return alert("車両設定で「" + day + "」稼働の車を登録してください。");
         cur.r[date] = { "迎え": {}, "送り": {} };
         vs.forEach(v => { cur.r[date]["迎え"][v.name] = []; cur.r[date]["送り"][v.name] = []; });
-        us.forEach((u, i) => {
+        us.sort((a,b) => a.order - b.order).forEach((u, i) => {
             const vName = vs[i % vs.length].name;
             cur.r[date]["迎え"][vName].push({ time: "14:00", name: u.name });
             cur.r[date]["送り"][vName].push({ time: "17:00", name: u.name });
@@ -133,17 +141,17 @@
             area.innerHTML = cur.v.filter(v => v.days.includes(day)).map(v => `
                 <div class="mb-4 border-2 border-black">
                     <table class="w-full">
-                        <tr class="h-8 bg-slate-100">
-                            <td class="w-10 bg-black text-white font-bold text-[9px]">運転</td>
+                        <tr class="h-8 bg-slate-100 text-[9px]">
+                            <td class="w-10 bg-black text-white font-bold">運転</td>
                             <td class="w-24 border-r-2 border-black"><select class="font-bold">${sOpts}</select></td>
-                            <td class="w-10 bg-gray-600 text-white italic text-[9px]">車名</td>
-                            <td class="font-black text-blue-800 bg-white">${v.name}</td>
+                            <td class="w-10 bg-gray-600 text-white italic">車名</td>
+                            <td class="font-black text-blue-800 bg-white text-[11px]">${v.name}</td>
                         </tr>
-                        <tr class="h-8 border-t border-black bg-slate-100">
-                            <td class="bg-gray-800 text-white font-bold text-[9px]">添乗</td>
+                        <tr class="h-8 border-t border-black bg-slate-100 text-[9px]">
+                            <td class="bg-gray-700 text-white font-bold">添乗</td>
                             <td class="border-r-2 border-black"><select class="font-bold">${sOpts}</select></td>
-                            <td class="bg-gray-200 text-[9px]">種別</td>
-                            <td class="bg-white">${type}</td>
+                            <td class="bg-gray-200">種別</td>
+                            <td class="bg-white text-[11px]">${type}</td>
                         </tr>
                     </table>
                     <table class="w-full border-t border-black">
@@ -162,14 +170,14 @@
             <tr class="h-10 text-[10px] border-b border-gray-300">
                 <td class="font-black">${u.name}</td>
                 <td class="text-[9px]">${u.school}</td>
-                <td class="w-6 font-bold">${u.grade}</td>
-                <td class="text-left px-1 text-red-600 font-bold leading-tight"></td>
+                <td class="w-7 font-bold">${u.grade}</td>
+                <td class="text-left px-1 text-red-600 font-bold leading-tight">${u.alert||''}</td>
             </tr>
         `).join('');
 
         document.getElementById('userTable').innerHTML = cur.u.map(u => `
             <tr class="h-9">
-                <td>${u.order}</td>
+                <td><input type="number" value="${u.order}" class="w-8" onchange="window.upd('u','${u.id}','order',this.value)"></td>
                 <td><input type="text" value="${u.name}" onchange="window.upd('u','${u.id}','name',this.value)" class="font-bold text-left px-2"></td>
                 <td><input type="text" value="${u.grade}" onchange="window.upd('u','${u.id}','grade',this.value)"></td>
                 <td><input type="text" value="${u.school}" onchange="window.upd('u','${u.id}','school',this.value)"></td>
@@ -190,26 +198,25 @@
     window.setTab = (t) => { document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active')); document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active')); document.getElementById(t+'Tab').classList.add('active'); document.getElementById(t+'Btn').classList.add('active'); };
     
     document.addEventListener('DOMContentLoaded', () => {
-        const d = new Date();
-        d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+        const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
         document.getElementById('dateInput').value = d.toISOString().split('T')[0];
         window.render();
     });
 </script>
 
 <header class="bg-slate-900 text-white p-3 no-print flex justify-between items-center shadow-lg">
-    <h1 class="text-xl font-black italic text-blue-400">SHOJIN SYSTEM v2.4</h1>
+    <h1 class="text-xl font-black italic text-blue-400">SHOJIN SYSTEM v2.5</h1>
     <div class="flex gap-3">
         <input type="date" id="dateInput" onchange="window.render()" class="text-black bg-white px-2 py-1 rounded font-bold text-sm">
-        <button onclick="window.autoAssign()" class="bg-orange-600 px-6 py-2 rounded-full font-black text-white shadow-lg">一括作成</button>
-        <button onclick="window.print()" class="bg-blue-600 px-6 py-2 rounded-full font-bold shadow-lg">印刷</button>
+        <button onclick="window.autoAssign()" class="bg-orange-600 px-6 py-2 rounded-full font-black text-white shadow-lg">送迎表を作成</button>
+        <button onclick="window.print()" class="bg-blue-600 px-6 py-2 rounded-full font-bold shadow-lg">印刷する</button>
     </div>
 </header>
 
 <nav class="flex bg-slate-200 no-print border-b border-slate-400 shadow-inner">
     <button id="scheduleBtn" onclick="window.setTab('schedule')" class="tab-btn active flex-1 py-3 text-[11px] font-bold">運行計画表</button>
     <button id="usersBtn" onclick="window.setTab('users')" class="tab-btn flex-1 py-3 text-[11px] font-bold">名簿・CSV読込</button>
-    <button id="configBtn" onclick="window.setTab('config')" class="tab-btn flex-1 py-3 text-[11px] font-bold">設定</button>
+    <button id="configBtn" onclick="window.setTab('config')" class="tab-btn flex-1 py-3 text-[11px] font-bold">車両・職員設定</button>
 </nav>
 
 <main class="p-4 flex-1 overflow-auto bg-slate-50">
@@ -217,13 +224,13 @@
         <div class="max-w-5xl mx-auto p-8 bg-white shadow-2xl border-2 border-black min-h-screen">
             <div class="flex justify-between items-end border-b-4 border-black pb-1 mb-6">
                 <h2 class="text-3xl font-black italic">送迎運行計画表</h2>
-                <div class="text-right text-sm font-bold">SHOJIN SYSTEM</div>
+                <div class="text-right text-sm font-bold">SHOJIN AUTO SYSTEM</div>
             </div>
             <div class="grid grid-cols-12 gap-6">
                 <div class="col-span-8">
-                    <div class="bg-blue-900 text-white text-[10px] font-bold py-1 px-3 mb-3">■ 迎えルート</div>
+                    <div class="bg-blue-900 text-white text-[10px] font-bold py-1 px-3 mb-3 uppercase tracking-tighter">■ Pickup Route (School to Office)</div>
                     <div id="迎えArea" class="grid grid-cols-2 gap-4"></div>
-                    <div class="bg-red-900 text-white text-[10px] font-bold py-1 px-3 mt-6 mb-3">■ 送りルート</div>
+                    <div class="bg-red-900 text-white text-[10px] font-bold py-1 px-3 mt-6 mb-3 uppercase tracking-tighter">■ Return Route (Office to Home)</div>
                     <div id="送りArea" class="grid grid-cols-2 gap-4"></div>
                 </div>
                 <div class="col-span-4 border-2 border-black p-1 bg-yellow-50">
@@ -240,14 +247,15 @@
     <div id="usersTab" class="tab-content">
         <div class="bg-white p-6 rounded-lg shadow-xl border border-slate-300 max-w-5xl mx-auto">
             <div class="flex justify-between mb-4 items-center">
-                <h2 class="text-xl font-black italic">名簿・CSV読込</h2>
-                <label class="bg-emerald-600 text-white px-6 py-2 rounded font-bold cursor-pointer text-xs shadow-lg">CSV読込 (Shift-JIS)<input type="file" onchange="window.handleCsv(event)" class="hidden"></label>
+                <h2 class="text-xl font-black italic">利用者名簿（CSV読込）</h2>
+                <label class="bg-emerald-600 text-white px-6 py-2 rounded font-bold cursor-pointer text-xs shadow-lg">CSVファイルを選択<input type="file" onchange="window.handleCsv(event)" class="hidden"></label>
             </div>
+            <p class="text-[10px] text-blue-600 mb-2 font-bold italic">※読込時に「かな」を除去し、学年に「小」を自動付与します。</p>
             <table>
-                <tr class="bg-slate-800 text-white font-bold h-10 text-[10px]"><th>No</th><th>利用者氏名(漢字+かな)</th><th>学年</th><th>学校名</th><th>対象曜日</th><th>操作</th></tr>
+                <tr class="bg-slate-800 text-white font-bold h-10 text-[10px]"><th>No</th><th>氏名（漢字）</th><th>学年</th><th>学校名</th><th>対象曜日</th><th>操作</th></tr>
                 <tbody id="userTable"></tbody>
             </table>
-            <button onclick="window.add('u')" class="mt-4 w-full bg-slate-100 py-3 border-2 border-dashed border-slate-300 font-bold text-slate-400 rounded">+ 手動追加</button>
+            <button onclick="window.add('u')" class="mt-4 w-full bg-slate-100 py-3 border-2 border-dashed border-slate-300 font-bold text-slate-400 rounded">+ 手動で利用者を追加</button>
         </div>
     </div>
 
@@ -256,12 +264,12 @@
             <div class="bg-white p-6 border-2 border-slate-800 rounded-xl shadow-lg">
                 <h3 class="font-black mb-4 border-l-4 border-blue-600 pl-2">出勤職員</h3>
                 <div id="staffList"></div>
-                <button onclick="window.add('s')" class="mt-4 w-full bg-blue-50 text-blue-700 py-2 font-bold rounded">+ 追加</button>
+                <button onclick="window.add('s')" class="mt-4 w-full bg-blue-50 text-blue-700 py-2 font-bold rounded">+ 職員を追加</button>
             </div>
             <div class="bg-white p-6 border-2 border-slate-800 rounded-xl shadow-lg">
                 <h3 class="font-black mb-4 border-l-4 border-orange-500 pl-2">稼働車両</h3>
                 <div id="vehicleList"></div>
-                <button onclick="window.add('v')" class="mt-4 w-full bg-orange-50 text-orange-700 py-2 font-bold rounded">+ 追加</button>
+                <button onclick="window.add('v')" class="mt-4 w-full bg-orange-50 text-orange-700 py-2 font-bold rounded">+ 車両を追加</button>
             </div>
         </div>
     </div>
