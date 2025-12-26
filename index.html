@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>SHOJIN 運行管理 v2.2</title>
+    <title>SHOJIN 運行管理 v2.4</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { font-family: sans-serif; background: #f1f5f9; font-size: 11px; }
@@ -13,15 +13,14 @@
         th, td { border: 1px solid black; padding: 4px; text-align: center; }
         .day-on { background: #2563eb !important; color: white !important; }
         input { width: 100%; border: none; font-size: 12px; background: transparent; text-align: center; outline: none; }
-        .critical { color: #dc2626; font-weight: bold; background: #fef2f2; }
         @media print { .no-print { display: none !important; } .max-w-5xl { width: 100%; max-width: none; border:none; } }
     </style>
 </head>
 <body class="min-h-screen flex flex-col">
 
 <script type="module">
-    // 完全に新しい保存キーで真っ白を回避
-    const KEY = 'SHOJIN_REBORN_V22';
+    // 過去のエラーを完全に遮断するため、新しいキーを設定
+    const KEY = 'SHOJIN_DATA_V24_FINAL';
     
     const loadState = () => {
         try {
@@ -40,39 +39,68 @@
 
     const getDay = () => ["日","月","火","水","木","金","土"][new Date(document.getElementById('dateInput').value).getDay()];
 
-    // CSV読込の抜本的修正
+    // CSV解析エンジン：引用符内の改行を保持し、列を正確に分離する
+    function parseCSV(text) {
+        const result = [];
+        let row = [];
+        let col = "";
+        let inQuote = false;
+        for (let i = 0; i < text.length; i++) {
+            const char = text[i];
+            const next = text[i+1];
+            if (inQuote) {
+                if (char === '"' && next === '"') { col += '"'; i++; }
+                else if (char === '"') { inQuote = false; }
+                else { col += char; }
+            } else {
+                if (char === '"') { inQuote = true; }
+                else if (char === ',') { row.push(col); col = ""; }
+                else if (char === '\r' || char === '\n') {
+                    if (col || row.length > 0) {
+                        row.push(col);
+                        result.push(row);
+                    }
+                    row = []; col = "";
+                    if (char === '\r' && next === '\n') i++;
+                } else { col += char; }
+            }
+        }
+        if (col || row.length > 0) { row.push(col); result.push(row); }
+        return result;
+    }
+
     window.handleCsv = (e) => {
         const file = e.target.files[0];
         if (!file) return;
         const reader = new FileReader();
         reader.onload = (ev) => {
-            const lines = ev.target.result.split(/\r\n|\n/);
+            const rows = parseCSV(ev.target.result);
             const cur = window.state[window.state.cur];
             cur.u = []; 
             let count = 0;
 
-            lines.forEach(line => {
-                const c = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(s => s.replace(/^"|"$/g, '').trim());
+            rows.forEach((c, index) => {
+                if (index === 0 || !c[0]) return; // ヘッダー飛ばし
                 
-                // 判定強化：1列目が1〜99の数字 かつ 2列目に文字が入っている行だけを「利用者」とする
-                const isNo = /^[0-9]{1,2}$/.test(c[0]);
-                const hasName = c[1] && c[1].length >= 2;
+                // お名前（1列目）：改行（\n）が含まれる場合は「漢字」の方を優先するか、繋げる
+                // 今回は「かな」と「漢字」をスペースで繋げます
+                const cleanName = c[0].replace(/\n/g, ' ');
+                // 曜日（2列目）："月曜" などの文字が含まれているかチェック
+                const days = ["月","火","水","木","金","土"].filter(d => c[1].includes(d)).join('');
 
-                if (isNo && hasName) {
-                    cur.u.push({
-                        id: 'U' + Math.random().toString(36).substr(2, 5),
-                        order: c[0],
-                        name: c[1],
-                        school: c[2] || "",
-                        grade: c[3] || "",
-                        alert: c[5] || c[6] || "", // アレルギーまたは理由
-                        days: "月火水木金土" 
-                    });
-                    count++;
-                }
+                cur.u.push({
+                    id: 'U' + Math.random().toString(36).substr(2, 5),
+                    order: count + 1,
+                    name: cleanName,
+                    school: c[3] || "", // 4列目：学校
+                    grade: c[4] || "",  // 5列目：学年
+                    alert: "",
+                    days: days || "月火水木金土"
+                });
+                count++;
             });
             window.save();
-            alert(count + "名のデータを正しく読み込みました。");
+            alert(count + "名のデータを読み込みました。");
         };
         reader.readAsText(file, 'Shift-JIS');
     };
@@ -83,13 +111,10 @@
         const day = getDay();
         const vs = cur.v.filter(v => v.days.includes(day));
         const us = cur.u.filter(u => u.days.includes(day));
-
         if (!vs.length) return alert("車両設定で「" + day + "」稼働の車を登録してください。");
-        
         cur.r[date] = { "迎え": {}, "送り": {} };
         vs.forEach(v => { cur.r[date]["迎え"][v.name] = []; cur.r[date]["送り"][v.name] = []; });
-
-        us.sort((a,b) => parseInt(a.order) - parseInt(b.order)).forEach((u, i) => {
+        us.forEach((u, i) => {
             const vName = vs[i % vs.length].name;
             cur.r[date]["迎え"][vName].push({ time: "14:00", name: u.name });
             cur.r[date]["送り"][vName].push({ time: "17:00", name: u.name });
@@ -138,18 +163,18 @@
                 <td class="font-black">${u.name}</td>
                 <td class="text-[9px]">${u.school}</td>
                 <td class="w-6 font-bold">${u.grade}</td>
-                <td class="text-left px-1 text-red-600 font-bold leading-tight">${u.alert||''}</td>
+                <td class="text-left px-1 text-red-600 font-bold leading-tight"></td>
             </tr>
         `).join('');
 
         document.getElementById('userTable').innerHTML = cur.u.map(u => `
             <tr class="h-9">
-                <td><input type="number" value="${u.order}" onchange="window.upd('u','${u.id}','order',this.value)"></td>
-                <td><input type="text" value="${u.name}" onchange="window.upd('u','${u.id}','name',this.value)" class="font-bold"></td>
+                <td>${u.order}</td>
+                <td><input type="text" value="${u.name}" onchange="window.upd('u','${u.id}','name',this.value)" class="font-bold text-left px-2"></td>
                 <td><input type="text" value="${u.grade}" onchange="window.upd('u','${u.id}','grade',this.value)"></td>
                 <td><input type="text" value="${u.school}" onchange="window.upd('u','${u.id}','school',this.value)"></td>
-                <td><input type="text" value="${u.alert}" onchange="window.upd('u','${u.id}','alert',this.value)" class="critical text-left px-2"></td>
-                <td><button onclick="window.del('u','${u.id}')" class="text-red-500 font-bold px-2">消去</button></td>
+                <td><div class="flex gap-0.5 justify-center">${["月","火","水","木","金","土"].map(d=>`<button onclick="window.toggleDay('u','${u.id}','${d}')" class="w-5 h-5 border rounded text-[9px] ${u.days.includes(d)?'day-on':'bg-slate-50'}">${d}</button>`).join('')}</div></td>
+                <td><button onclick="window.del('u','${u.id}')" class="text-red-500 font-bold px-2">×</button></td>
             </tr>
         `).join('');
 
@@ -160,7 +185,7 @@
 
     window.upd = (t, id, p, v) => { const i = window.state[window.state.cur][t].find(x => x.id === id); if(i) { i[p] = v; window.save(); } };
     window.toggleDay = (t, id, d) => { const i = window.state[window.state.cur][t].find(x => x.id === id); i.days = i.days.includes(d) ? i.days.filter(x => x !== d) : [...i.days, d]; window.save(); };
-    window.add = (t) => { const n = prompt("名前を入力"); if(n) { window.state[window.state.cur][t].push({id:'ID'+Date.now(), name:n, days:[], order:999}); window.save(); } };
+    window.add = (t) => { const n = prompt("名前を入力"); if(n) { window.state[window.state.cur][t].push({id:'ID'+Date.now(), name:n, days:["月","火","水","木","金","土"], order:99}); window.save(); } };
     window.del = (t, id) => { if(confirm("消去しますか？")) { window.state[window.state.cur][t] = window.state[window.state.cur][t].filter(x => x.id !== id); window.save(); } };
     window.setTab = (t) => { document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active')); document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active')); document.getElementById(t+'Tab').classList.add('active'); document.getElementById(t+'Btn').classList.add('active'); };
     
@@ -173,7 +198,7 @@
 </script>
 
 <header class="bg-slate-900 text-white p-3 no-print flex justify-between items-center shadow-lg">
-    <h1 class="text-xl font-black italic text-blue-400">SHOJIN SYSTEM v2.2</h1>
+    <h1 class="text-xl font-black italic text-blue-400">SHOJIN SYSTEM v2.4</h1>
     <div class="flex gap-3">
         <input type="date" id="dateInput" onchange="window.render()" class="text-black bg-white px-2 py-1 rounded font-bold text-sm">
         <button onclick="window.autoAssign()" class="bg-orange-600 px-6 py-2 rounded-full font-black text-white shadow-lg">一括作成</button>
@@ -196,12 +221,12 @@
             </div>
             <div class="grid grid-cols-12 gap-6">
                 <div class="col-span-8">
-                    <div class="bg-blue-900 text-white text-[10px] font-bold py-1 px-3 mb-3">■ 迎えルート (学校 → 事業所)</div>
+                    <div class="bg-blue-900 text-white text-[10px] font-bold py-1 px-3 mb-3">■ 迎えルート</div>
                     <div id="迎えArea" class="grid grid-cols-2 gap-4"></div>
-                    <div class="bg-red-900 text-white text-[10px] font-bold py-1 px-3 mt-6 mb-3">■ 送りルート (事業所 → 自宅)</div>
+                    <div class="bg-red-900 text-white text-[10px] font-bold py-1 px-3 mt-6 mb-3">■ 送りルート</div>
                     <div id="送りArea" class="grid grid-cols-2 gap-4"></div>
                 </div>
-                <div class="col-span-4 border-2 border-black p-1 bg-yellow-50 shadow-inner">
+                <div class="col-span-4 border-2 border-black p-1 bg-yellow-50">
                     <div class="text-center font-bold bg-black text-white text-[10px] py-1 mb-2 italic">重要事項確認リスト</div>
                     <table class="w-full">
                         <thead><tr class="bg-slate-200 text-[8px]"><th>氏名</th><th>学校</th><th>学年</th><th>重要事項</th></tr></thead>
@@ -215,11 +240,11 @@
     <div id="usersTab" class="tab-content">
         <div class="bg-white p-6 rounded-lg shadow-xl border border-slate-300 max-w-5xl mx-auto">
             <div class="flex justify-between mb-4 items-center">
-                <h2 class="text-xl font-black italic">利用者名簿管理</h2>
-                <label class="bg-emerald-600 text-white px-6 py-2 rounded font-bold cursor-pointer text-xs shadow-lg">CSV読込(Shift-JIS)<input type="file" onchange="window.handleCsv(event)" class="hidden"></label>
+                <h2 class="text-xl font-black italic">名簿・CSV読込</h2>
+                <label class="bg-emerald-600 text-white px-6 py-2 rounded font-bold cursor-pointer text-xs shadow-lg">CSV読込 (Shift-JIS)<input type="file" onchange="window.handleCsv(event)" class="hidden"></label>
             </div>
             <table>
-                <tr class="bg-slate-800 text-white font-bold h-10"><th>No</th><th>利用者氏名</th><th>学年</th><th>学校名</th><th>アレルギー・重要事項</th><th>操作</th></tr>
+                <tr class="bg-slate-800 text-white font-bold h-10 text-[10px]"><th>No</th><th>利用者氏名(漢字+かな)</th><th>学年</th><th>学校名</th><th>対象曜日</th><th>操作</th></tr>
                 <tbody id="userTable"></tbody>
             </table>
             <button onclick="window.add('u')" class="mt-4 w-full bg-slate-100 py-3 border-2 border-dashed border-slate-300 font-bold text-slate-400 rounded">+ 手動追加</button>
