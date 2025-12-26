@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>SHOJIN 運行管理 v4.0</title>
+    <title>SHOJIN 運行管理 v4.3</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { font-family: sans-serif; background: #f1f5f9; font-size: 10px; }
@@ -10,9 +10,11 @@
         .tab-content.active { display: block; }
         table { border-collapse: collapse; width: 100%; border: 1.5px solid black; background: white; }
         th, td { border: 1px solid black; padding: 2px; text-align: center; }
-        .day-on { background: #2563eb !important; color: white !important; }
+        .day-on { background: #2563eb !important; color: white !important; font-weight: bold; }
+        .absent-row { background-color: #e2e8f0 !important; color: #94a3b8 !important; }
         input, select { width: 100%; border: none; font-size: 11px; background: transparent; text-align: center; outline: none; }
-        .select-staff { background-color: #f8fafc; cursor: pointer; font-weight: bold; }
+        .btn-absent { font-size: 8px; padding: 1px 4px; border-radius: 4px; border: 1px solid #cbd5e1; }
+        .is-absent { background: #ef4444 !important; color: white !important; border-color: #ef4444; }
         @media print { 
             .no-print { display: none !important; } 
             .max-w-5xl { width: 100% !important; border:none; margin:0; padding:0; }
@@ -23,7 +25,7 @@
 <body class="min-h-screen flex flex-col">
 
 <script type="module">
-    const KEY = 'SHOJIN_DATA_V40_FINAL';
+    const KEY = 'SHOJIN_DATA_V43_FINAL';
     
     const loadState = () => {
         try {
@@ -60,7 +62,7 @@
                 if (inQuotes) { if (char === '"' && next === '"') { field += '"'; i++; } else if (char === '"') { inQuotes = false; } else { field += char; } }
                 else { if (char === '"') { inQuotes = true; } else if (char === ',') { row.push(field); field = ''; } else if (char === '\n') { row.push(field); if (row.length > 0) rows.push(row); row = []; field = ''; } else { field += char; } }
             }
-            const cur = window.state[window.state.cur];
+            const cur = window.state.off1;
             cur.u = rows.slice(1).filter(c => c[0] && c[0].trim() !== "").map(c => {
                 let name = c[0].trim().split('\n').pop();
                 let grade = (c[4]||"").trim(); if (/^[1-6]$/.test(grade)) grade = "小" + grade;
@@ -73,14 +75,13 @@
 
     window.autoAssign = () => {
         const date = document.getElementById('dateInput').value;
-        const cur = window.state[window.state.cur];
+        const cur = window.state.off1;
         const day = getDay();
         const vs = cur.v.filter(v => v.days.includes(day));
-        const us = cur.u.filter(u => u.days.includes(day) && !u.self);
+        // 「自力」にチェックが入っていない利用者のみを車両に割り振る
+        const usForVehicle = cur.u.filter(u => u.days.includes(day) && !u.self);
         
-        if (!vs.length) return alert("車両を登録してください。");
-
-        const sortedUs = [...us].sort((a, b) => a.address.localeCompare(b.address));
+        const sortedUs = [...usForVehicle].sort((a, b) => a.address.localeCompare(b.address));
         cur.r[date] = { "迎え": [], "送り": [] };
         
         vs.forEach(v => {
@@ -89,162 +90,166 @@
         });
 
         sortedUs.forEach((u, i) => {
-            let targetIdx = i % vs.length;
+            let targetIdx = i % (vs.length || 1);
             if(u.fixedV) {
                 const found = cur.r[date]["迎え"].findIndex(r => r.vName === u.fixedV);
                 if(found !== -1) targetIdx = found;
             }
-            cur.r[date]["迎え"][targetIdx].members.push({ time: u.defPick, uId: u.id });
-            cur.r[date]["送り"][targetIdx].members.push({ time: u.defDrop, uId: u.id });
+            if(vs.length) {
+                cur.r[date]["迎え"][targetIdx].members.push({ time: u.defPick, uId: u.id, absent: false });
+                cur.r[date]["送り"][targetIdx].members.push({ time: u.defDrop, uId: u.id, absent: false });
+            }
         });
         window.save();
     };
 
     window.addRouteBox = (type) => {
         const date = document.getElementById('dateInput').value;
-        const cur = window.state[window.state.cur];
+        const cur = window.state.off1;
         if(!cur.r[date]) cur.r[date] = { "迎え": [], "送り": [] };
         cur.r[date][type].push({ vName: "新規枠", driver: "", staff: "", members: [] });
         window.save();
     };
 
+    window.delRouteBox = (type, idx) => {
+        if(!confirm("この車両枠を削除しますか？")) return;
+        const date = document.getElementById('dateInput').value;
+        window.state.off1.r[date][type].splice(idx, 1);
+        window.save();
+    };
+
     window.render = () => {
-        const cur = window.state[window.state.cur];
+        const cur = window.state.off1;
         const date = document.getElementById('dateInput').value;
         const day = getDay();
         const s_today = cur.s.filter(s => s.days.includes(day));
-        const phoneInfo = cur.phones.map(p => p.holder ? `${p.holder}(${p.label})` : p.label).join(' / ');
 
-        // スタッフ体制・携帯
+        // スタッフ表示
         document.getElementById('staffHeader').innerHTML = `
             <div class="flex gap-4 mb-2">
                 <div class="flex-1">
                     <div class="bg-gray-800 text-white text-[8px] font-bold px-2 py-0.5">スタッフ体制</div>
-                    <table><tr class="h-6 bg-gray-50">${Array(4).fill(0).map((_, i) => `<td class="w-8 bg-gray-200 font-bold">${i+1}</td><td class="w-24 font-black">${s_today[i]?.name || ''}</td>`).join('')}</tr></table>
+                    <table><tr class="h-6 bg-gray-50">${Array(5).fill(0).map((_, i) => `<td class="w-6 bg-gray-200">${i+1}</td><td class="w-20 font-bold text-[10px]">${s_today[i]?.name || ''}</td>`).join('')}</tr></table>
                 </div>
-                <div class="w-72">
-                    <div class="bg-blue-800 text-white text-[8px] font-bold px-2 py-0.5">連絡先(携帯) ・ 携帯所持者</div>
-                    <table>
-                        ${cur.phones.map((p, i) => `
-                            <tr class="h-6">
-                                <td class="w-12 bg-gray-100 font-bold">${p.label}</td>
-                                <td class="w-24 font-bold text-blue-700">${p.num}</td>
-                                <td class="bg-yellow-50">
-                                    <select onchange="window.state.off1.phones[${i}].holder=this.value;window.save()">
-                                        <option value="">(未定)</option>
-                                        ${s_today.map(s => `<option value="${s.name}" ${p.holder===s.name?'selected':''}>${s.name}</option>`).join('')}
-                                    </select>
-                                </td>
-                            </tr>
-                        `).join('')}
+                <div class="w-64">
+                    <div class="bg-blue-800 text-white text-[8px] font-bold px-2 py-0.5">連絡先携帯 / 所持者</div>
+                    <table class="text-[9px]">
+                        ${cur.phones.map((p, i) => `<tr><td class="bg-gray-100 w-12">${p.label}</td><td class="font-bold text-blue-700">${p.num}</td><td class="w-20"><select onchange="window.state.off1.phones[${i}].holder=this.value;window.save()"><option value="">-</option>${s_today.map(s=>`<option value="${s.name}" ${p.holder===s.name?'selected':''}>${s.name}</option>`).join('')}</td></tr>`).join('')}
                     </table>
                 </div>
             </div>
         `;
 
-        // 運行ルート描画
+        const activeUids = new Set();
+
         ['迎え', '送り'].forEach(type => {
             const routes = cur.r[date]?.[type] || [];
             document.getElementById(type + 'Area').innerHTML = routes.map((route, rIdx) => `
                 <div class="mb-3 border-2 border-black break-inside-avoid">
-                    <table class="w-full bg-slate-100 text-[8px]">
-                        <tr>
-                            <td class="w-8 bg-black text-white">運転</td>
-                            <td class="w-20 bg-white">
-                                <select class="select-staff" onchange="window.state.off1.r['${date}']['${type}'][${rIdx}].driver=this.value;window.save()">
-                                    <option value="">-</option>
-                                    ${s_today.map(s => `<option value="${s.name}" ${route.driver===s.name?'selected':''}>${s.name}</option>`).join('')}
-                                </select>
-                            </td>
-                            <td class="w-8 bg-gray-600 text-white">添乗</td>
-                            <td class="w-20 bg-white">
-                                <select class="select-staff" onchange="window.state.off1.r['${date}']['${type}'][${rIdx}].staff=this.value;window.save()">
-                                    <option value="">-</option>
-                                    ${s_today.map(s => `<option value="${s.name}" ${route.staff===s.name?'selected':''}>${s.name}</option>`).join('')}
-                                </select>
-                            </td>
-                            <td class="w-8 bg-blue-800 text-white">車両</td>
-                            <td class="w-24 bg-white"><input type="text" value="${route.vName}" class="font-black text-blue-900" onchange="window.state.off1.r['${date}']['${type}'][${rIdx}].vName=this.value;window.save()"></td>
-                            <td class="bg-white text-black px-1 font-bold text-[8px] text-right">${phoneInfo}</td>
+                    <table class="w-full bg-slate-200">
+                        <tr class="h-8">
+                            <td class="w-8 bg-black text-white text-[7px]">運転</td>
+                            <td class="w-24 bg-white"><select class="text-[13px] font-black" onchange="window.state.off1.r['${date}']['${type}'][${rIdx}].driver=this.value;window.save()"><option value="">-</option>${s_today.map(s => `<option value="${s.name}" ${route.driver===s.name?'selected':''}>${s.name}</option>`).join('')}</select></td>
+                            <td class="w-8 bg-gray-600 text-white text-[7px]">添乗</td>
+                            <td class="w-24 bg-white"><select class="text-[13px] font-black" onchange="window.state.off1.r['${date}']['${type}'][${rIdx}].staff=this.value;window.save()"><option value="">-</option>${s_today.map(s => `<option value="${s.name}" ${route.staff===s.name?'selected':''}>${s.name}</option>`).join('')}</select></td>
+                            <td class="w-8 bg-blue-800 text-white text-[7px]">車両</td>
+                            <td class="w-28 bg-white"><input type="text" value="${route.vName}" class="text-[14px] font-black text-blue-900" onchange="window.state.off1.r['${date}']['${type}'][${rIdx}].vName=this.value;window.save()"></td>
+                            <td class="no-print w-6 bg-white"><button onclick="window.delRouteBox('${type}',${rIdx})" class="text-red-500 font-bold">×</button></td>
                         </tr>
                     </table>
                     <table class="w-full border-t border-black">
-                        <tr class="bg-gray-50 text-[7px] h-3">
-                            <td class="w-10">時間</td>
-                            <td class="w-32">氏名</td>
-                            ${type==='迎え' ? '<td class="w-8">学年</td><td>学校名</td>' : '<td>備考</td>'}
+                        <tr class="bg-gray-100 text-[7px] h-3">
+                            <td class="w-12">時間</td><td class="w-8 no-print">出欠</td><td class="w-32">氏名</td>
+                            ${type==='迎え' ? '<td class="w-8">学</td><td>学校名</td>' : '<td>備考</td>'}
                         </tr>
                         ${(route.members.concat(Array(7).fill({}))).slice(0, 7).map((m, mIdx) => {
                             const user = cur.u.find(u => u.id === m.uId) || {name: '', school: '', grade: ''};
+                            if(m.uId && !m.absent) activeUids.add(m.uId);
                             return `
-                            <tr class="h-7 border-t border-gray-300">
-                                <td class="bg-yellow-50"><input type="text" value="${m.time||''}" onchange="window.updRouteMember('${type}',${rIdx},${mIdx},'time',this.value)"></td>
-                                <td class="text-left px-1 font-black text-[11px]">
+                            <tr class="h-7 border-t border-gray-300 ${m.absent?'absent-row':''}">
+                                <td class="bg-yellow-50 font-bold"><input type="text" value="${m.time||''}" onchange="window.updRouteMember('${type}',${rIdx},${mIdx},'time',this.value)"></td>
+                                <td class="no-print"><button onclick="window.toggleAbsent('${type}',${rIdx},${mIdx})" class="btn-absent ${m.absent?'is-absent':'bg-white'}">${m.absent?'欠':'出'}</button></td>
+                                <td class="text-left px-1 font-black text-[12px]">
                                     <select onchange="window.updRouteMember('${type}',${rIdx},${mIdx},'uId',this.value)">
                                         <option value="">-</option>
-                                        ${cur.u.filter(u=>u.days.includes(day)).map(u => `<option value="${u.id}" ${m.uId===u.id?'selected':''}>${u.name}</option>`).join('')}
+                                        ${cur.u.filter(u=>u.days.includes(day) && !u.self).map(u => `<option value="${u.id}" ${m.uId===u.id?'selected':''}>${u.name}</option>`).join('')}
                                     </select>
                                 </td>
-                                ${type==='迎え' ? `
-                                    <td class="text-[8px] bg-gray-50">${user.grade}</td>
-                                    <td class="text-left px-1 text-[9px] font-bold">${user.school}</td>
-                                ` : `
-                                    <td class="text-left px-1 text-[9px]"><input type="text" placeholder="..."></td>
-                                `}
+                                ${type==='迎え' ? `<td>${user.grade}</td><td class="text-left px-1 text-[9px] font-bold">${user.school}</td>` : `<td><input type="text"></td>`}
                             </tr>`;
                         }).join('')}
                     </table>
                 </div>
-            `).join('') + `<button onclick="window.addRouteBox('${type}')" class="no-print w-full border-2 border-dashed border-gray-300 py-1 text-gray-400 font-bold mb-4">+ 車両便を追加</button>`;
+            `).join('') + `<button onclick="window.addRouteBox('${type}')" class="no-print w-full border-2 border-dashed border-gray-300 py-1 text-gray-400 font-bold mb-4">+ 車両枠を追加</button>`;
             
+            // 保護者送迎（自力）の表示セクション
             const self_today = cur.u.filter(u => u.days.includes(day) && u.self);
-            document.getElementById(type + 'Self').innerHTML = self_today.length ? `<div class="p-1 border-2 border-red-500 bg-red-50 mb-2 font-black text-[11px]">【保護者送迎】${self_today.map(u => u.name).join(' 、 ')}</div>` : '';
+            self_today.forEach(u => activeUids.add(u.id)); // 自力の子もリストに追加
+            
+            document.getElementById(type + 'Self').innerHTML = self_today.length 
+                ? `<div class="p-2 border-2 border-orange-500 bg-orange-50 mb-4 rounded">
+                    <div class="font-black text-[10px] text-orange-700 mb-1 border-b border-orange-200">【保護者送迎・自力】</div>
+                    <div class="grid grid-cols-2 gap-2">
+                        ${self_today.map(u => `<div class="flex justify-between text-[11px]">
+                            <span class="font-black">● ${u.name}</span>
+                            <span class="text-[9px] text-gray-600">${u.grade} / ${u.school}</span>
+                        </div>`).join('')}
+                    </div>
+                   </div>` 
+                : '';
         });
 
-        // 名簿タブ (重要事項 Note を追加)
+        // 名簿タブ
         document.getElementById('userTable').innerHTML = cur.u.map(u => `
             <tr class="h-8">
-                <td><input type="text" value="${u.name}" class="font-bold"></td>
-                <td><input type="text" value="${u.grade}" class="w-10" onchange="window.upd('u','${u.id}','grade',this.value)"></td>
-                <td><input type="text" value="${u.school}" class="w-24" onchange="window.upd('u','${u.id}','school',this.value)"></td>
-                <td><input type="text" value="${u.note||''}" class="text-red-600 font-bold" placeholder="アレルギー等" onchange="window.upd('u','${u.id}','note',this.value)"></td>
-                <td><input type="text" value="${u.address}" class="text-[8px] text-gray-400" onchange="window.upd('u','${u.id}','address',this.value)"></td>
-                <td><select onchange="window.upd('u','${u.id}','fixedV',this.value)"><option value="">-</option>${cur.v.map(v=>`<option value="${v.name}" ${u.fixedV===v.name?'selected':''}>${v.name}</option>`).join('')}</select></td>
-                <td><input type="checkbox" ${u.self?'checked':''} onchange="window.upd('u','${u.id}','self',this.checked)"></td>
+                <td><input type="text" value="${u.name}" class="font-bold" onchange="window.upd('u','${u.id}','name',this.value)"></td>
+                <td class="bg-slate-50 text-[8px]">${["月","火","水","木","金","土"].map(d=>`<span class="${u.days.includes(d)?'text-blue-600 font-bold underline':'text-gray-300'} cursor-pointer px-0.5" onclick="window.toggleDay('u','${u.id}','${d}')">${d}</span>`).join('')}</td>
+                <td><input type="text" value="${u.grade}" class="w-8" onchange="window.upd('u','${u.id}','grade',this.value)"></td>
+                <td><input type="text" value="${u.school}" class="w-20" onchange="window.upd('u','${u.id}','school',this.value)"></td>
+                <td><input type="text" value="${u.note||''}" class="text-red-600 font-bold text-[9px]" onchange="window.upd('u','${u.id}','note',this.value)"></td>
+                <td class="bg-orange-50"><input type="checkbox" ${u.self?'checked':''} onchange="window.upd('u','${u.id}','self',this.checked)"></td>
                 <td><button onclick="window.del('u','${u.id}')" class="text-red-500">×</button></td>
             </tr>
         `).join('');
 
-        // 重要事項確認リスト (名簿のnoteと連動)
-        document.getElementById('attendList').innerHTML = cur.u.filter(u => u.days.includes(day)).map(u => `
+        // 重要事項確認リスト
+        document.getElementById('attendList').innerHTML = cur.u.filter(u => u.days.includes(day) && activeUids.has(u.id)).map(u => `
             <tr class="h-8 text-[9px] border-b">
-                <td class="font-black text-left pl-1">${u.name}</td>
-                <td>${u.grade}</td>
-                <td class="text-left pl-1 text-red-600 font-bold text-[8px]">${u.note || ''}</td>
+                <td class="font-black text-left pl-1 w-20">${u.name}${u.self?'<span class="text-[7px] text-orange-600">(自)</span>':''}</td>
+                <td class="w-6">${u.grade}</td>
+                <td class="text-left pl-1 text-red-600 font-black text-[8px] w-32">${u.note || ''}</td>
+                <td class="bg-white"><input type="text" placeholder="..."></td>
             </tr>
         `).join('');
 
         const drawC = (list, t) => list.map(i => `<div class="flex items-center justify-between p-2 border-b bg-white mb-1 shadow-sm">
             <input type="text" value="${i.name}" class="font-bold w-24 text-left" onchange="window.upd('${t}','${i.id}','name',this.value)">
             <div class="flex gap-1">${["月","火","水","木","金","土"].map(d => `<button onclick="window.toggleDay('${t}','${i.id}','${d}')" class="w-7 h-7 border rounded ${i.days.includes(d)?'day-on text-white':'bg-slate-50 text-gray-400'}">${d}</button>`).join('')}</div>
-            <button onclick="window.del('${t}','${i.id}')" class="ml-2 text-red-500 px-2 font-bold">×</button>
+            <button onclick="window.del('${t}','${i.id}')" class="ml-2 text-red-500 font-bold px-2">×</button>
         </div>`).join('');
         document.getElementById('staffList').innerHTML = drawC(cur.s, 's');
         document.getElementById('vehicleList').innerHTML = drawC(cur.v, 'v');
     };
 
+    window.toggleAbsent = (type, rIdx, mIdx) => {
+        const date = document.getElementById('dateInput').value;
+        const m = window.state.off1.r[date][type][rIdx].members[mIdx];
+        m.absent = !m.absent;
+        window.save();
+    };
+
     window.updRouteMember = (type, rIdx, mIdx, field, val) => {
         const date = document.getElementById('dateInput').value;
-        const cur = window.state[window.state.cur];
-        if(!cur.r[date][type][rIdx].members[mIdx]) cur.r[date][type][rIdx].members[mIdx] = {};
+        const cur = window.state.off1;
+        if(!cur.r[date][type][rIdx].members[mIdx]) cur.r[date][type][rIdx].members[mIdx] = {absent:false};
         cur.r[date][type][rIdx].members[mIdx][field] = val;
         window.save();
     };
 
-    window.upd = (t, id, p, v) => { const i = window.state[window.state.cur][t].find(x => x.id === id); if(i) { i[p] = v; window.save(); } };
-    window.toggleDay = (t, id, d) => { const i = window.state[window.state.cur][t].find(x => x.id === id); i.days = i.days.includes(d) ? i.days.filter(x => x !== d) : [...i.days, d]; window.save(); };
-    window.add = (t) => { window.state[window.state.cur][t].push({id:'ID'+Date.now(), name:"新規", days:[], defPick:"10:00", defDrop:"16:00", self:false, fixedV:"", address:"", school:"", note:""}); window.save(); };
-    window.del = (t, id) => { if(confirm("消去しますか？")) { window.state[window.state.cur][t] = window.state[window.state.cur][t].filter(x => x.id !== id); window.save(); } };
+    window.upd = (t, id, p, v) => { const i = window.state.off1[t].find(x => x.id === id); if(i) { i[p] = v; window.save(); } };
+    window.toggleDay = (t, id, d) => { const i = window.state.off1[t].find(x => x.id === id); i.days = i.days.includes(d) ? i.days.filter(x => x !== d) : [...i.days, d]; window.save(); };
+    window.add = (t) => { window.state.off1[t].push({id:'ID'+Date.now(), name:"新規", days:[], defPick:"10:00", defDrop:"16:00", self:false, fixedV:"", address:"", school:"", note:""}); window.save(); };
+    window.del = (t, id) => { if(confirm("消去しますか？")) { window.state.off1[t] = window.state.off1[t].filter(x => x.id !== id); window.save(); } };
     window.setTab = (t) => { document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active')); document.getElementById(t+'Tab').classList.add('active'); };
     
     document.addEventListener('DOMContentLoaded', () => {
@@ -254,14 +259,14 @@
     });
 </script>
 
-<header class="bg-slate-900 text-white p-2 no-print flex justify-between items-center">
-    <div class="flex items-center gap-4"><h1 class="text-lg font-black italic text-blue-400">SHOJIN v4.0</h1><input type="date" id="dateInput" onchange="window.render()" class="text-black bg-white px-2 py-0.5 rounded font-bold text-xs"></div>
-    <div class="flex gap-2"><button onclick="window.autoAssign()" class="bg-orange-600 px-5 py-1.5 rounded-full font-black text-white text-xs">自動作成 (住所順)</button><button onclick="window.print()" class="bg-blue-600 px-5 py-1.5 rounded-full font-bold text-xs">印刷</button></div>
+<header class="bg-slate-900 text-white p-2 no-print flex justify-between items-center shadow-lg">
+    <div class="flex items-center gap-4"><h1 class="text-lg font-black italic text-blue-400">SHOJIN v4.3</h1><input type="date" id="dateInput" onchange="window.render()" class="text-black bg-white px-2 py-0.5 rounded font-bold text-xs"></div>
+    <div class="flex gap-2"><button onclick="window.autoAssign()" class="bg-orange-600 px-5 py-1.5 rounded-full font-black text-white text-xs shadow-md">自動作成</button><button onclick="window.print()" class="bg-blue-600 px-5 py-1.5 rounded-full font-bold text-xs shadow-md">印刷</button></div>
 </header>
 
 <nav class="flex bg-slate-200 no-print border-b border-slate-400">
-    <button onclick="window.setTab('schedule')" class="flex-1 py-2 font-bold text-[10px]">運行計画表</button>
-    <button onclick="window.setTab('users')" class="flex-1 py-2 font-bold text-[10px]">名簿・重要事項設定</button>
+    <button onclick="window.setTab('schedule')" class="flex-1 py-2 font-bold text-[10px] border-r border-slate-300">運行計画表</button>
+    <button onclick="window.setTab('users')" class="flex-1 py-2 font-bold text-[10px] border-r border-slate-300">名簿・自力設定</button>
     <button onclick="window.setTab('config')" class="flex-1 py-2 font-bold text-[10px]">職員・車両マスタ</button>
 </nav>
 
@@ -271,17 +276,17 @@
             <h2 class="text-xl font-black border-b-2 border-black mb-2 flex justify-between"><span>送迎運行計画表</span><span class="text-[9px] font-normal underline">SHOJIN 送迎管理システム</span></h2>
             <div id="staffHeader"></div>
             <div class="grid grid-cols-12 gap-3">
-                <div class="col-span-9">
-                    <div class="bg-blue-900 text-white font-bold p-1 text-[8px]">■ 迎え (学年・学校名を表示)</div>
-                    <div id="迎えArea" class="grid grid-cols-2 gap-2 mt-1"></div>
+                <div class="col-span-8">
+                    <div class="bg-blue-900 text-white font-bold p-1 text-[8px] mb-1">■ 迎えルート</div>
+                    <div id="迎えArea"></div>
                     <div id="迎えSelf"></div>
-                    <div class="bg-red-900 text-white font-bold p-1 mt-2 text-[8px]">■ 送り (備考欄)</div>
-                    <div id="送りArea" class="grid grid-cols-2 gap-2 mt-1"></div>
+                    <div class="bg-red-900 text-white font-bold p-1 text-[8px] mb-1 mt-4">■ 送りルート</div>
+                    <div id="送りArea"></div>
                     <div id="送りSelf"></div>
                 </div>
-                <div class="col-span-3 border border-black p-1 bg-yellow-50">
-                    <div class="text-center font-bold bg-black text-white text-[8px] mb-1">重要事項確認リスト</div>
-                    <table><thead><tr class="bg-gray-200 text-[7px]"><th>氏名</th><th>学</th><th>アレルギー・てんかん等</th></tr></thead><tbody id="attendList"></tbody></table>
+                <div class="col-span-4 border-2 border-black p-1 bg-yellow-50">
+                    <div class="text-center font-bold bg-black text-white text-[9px] mb-1">重要事項確認リスト</div>
+                    <table><thead><tr class="bg-gray-200 text-[7px]"><th>氏名</th><th>学</th><th>アレルギー等</th><th>当日備考</th></tr></thead><tbody id="attendList"></tbody></table>
                 </div>
             </div>
         </div>
@@ -289,12 +294,9 @@
 
     <div id="usersTab" class="tab-content">
         <div class="bg-white p-4 rounded shadow border max-w-6xl mx-auto">
-            <div class="flex justify-between mb-4">
-                <h2 class="text-lg font-black text-blue-800">利用者名簿（重要事項を手入力してください）</h2>
-                <label class="bg-emerald-600 text-white px-4 py-1 rounded font-bold cursor-pointer text-xs">CSV読込<input type="file" onchange="window.handleCsv(event)" class="hidden"></label>
-            </div>
+            <div class="flex justify-between mb-4"><h2 class="text-lg font-black text-blue-800">利用者名簿 (自力＝保護者送迎)</h2><label class="bg-emerald-600 text-white px-4 py-1 rounded font-bold cursor-pointer text-xs">CSV読込<input type="file" onchange="window.handleCsv(event)" class="hidden"></label></div>
             <table>
-                <tr class="bg-slate-800 text-white text-[9px]"><th>氏名</th><th>学年</th><th>学校名</th><th>重要事項(アレルギー等)</th><th>住所</th><th>固定車両</th><th>自力</th><th>削</th></tr>
+                <tr class="bg-slate-800 text-white text-[9px]"><th>氏名</th><th>利用曜日</th><th>学年</th><th>学校名</th><th>重要事項</th><th class="bg-orange-700">自力</th><th>削</th></tr>
                 <tbody id="userTable"></tbody>
             </table>
             <button onclick="window.add('u')" class="mt-4 w-full bg-slate-50 py-3 border-2 border-dashed border-slate-300 font-bold text-slate-400">+ 利用者を新規追加</button>
