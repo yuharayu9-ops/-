@@ -2,24 +2,25 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>SHOJIN 運行管理 v22.0 完全版</title>
+    <title>SHOJIN 運行管理 v23.0 現場再現版</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        body { font-family: sans-serif; background: #f1f5f9; font-size: 11px; }
+        body { font-family: sans-serif; background: #f8fafc; font-size: 11px; color: #000; }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
-        table { border-collapse: collapse; width: 100%; border: 2px solid black; background: white; }
-        th, td { border: 1px solid black; padding: 4px; text-align: center; }
-        .grade-badge { color: #1e40af !important; font-weight: 900 !important; font-size: 16px !important; margin-left: 8px; background: #dbeafe; border: 1px solid #1e40af; padding: 0 4px; border-radius: 4px; }
-        .time-box { background: #fff7ed !important; border: 1px solid #f97316 !important; font-size: 15px !important; text-align: center; font-weight: bold; }
-        input, select { width: 100%; border: none; font-size: 13px; background: transparent; text-align: center; outline: none; font-weight: bold; }
-        @media print { .no-print { display: none !important; } .print-area { width: 100% !important; margin: 0; } }
+        table { border-collapse: collapse; width: 100%; border: 2px solid #000; background: #fff; }
+        th, td { border: 1px solid #000; padding: 3px; text-align: center; }
+        /* 学年の強調：青文字・極太 */
+        .grade-highlight { color: #1d4ed8 !important; font-weight: 900 !important; font-size: 16px !important; margin-left: 8px; border: 1px solid #bfdbfe; padding: 0 4px; background: #eff6ff; }
+        .time-box { background: #fffbeb !important; border: 1px solid #f59e0b !important; font-size: 15px !important; font-weight: bold; width: 100%; text-align: center; }
+        .staff-header { background: #334155 !important; color: #fff !important; font-weight: bold; }
+        @media print { .no-print { display: none !important; } .print-area { width: 100% !important; margin: 0; border: none; } }
     </style>
 </head>
-<body class="min-h-screen flex flex-col">
+<body class="min-h-screen">
 
 <script>
-    const KEY = 'SHOJIN_REBASE_V22';
+    const KEY = 'SHOJIN_V23_FINAL';
     const createOffice = () => ({ u: [], v: [], s: [], r: {}, phones: [{label:"A携帯", num:"080-5989-3626"}, {label:"B携帯", num:"080-5989-3627"}] });
 
     let state = JSON.parse(localStorage.getItem(KEY)) || {
@@ -31,13 +32,13 @@
     const getCur = () => state.offices[state.curIdx];
     const getDay = () => ["日","月","火","水","木","金","土"][new Date(document.getElementById('dateInput').value).getDay()];
 
-    // CSV読込：1行目削除 + 学年(c[4])・時間(c[6])・区分(c[7])等の読み込み
+    // CSV読込：1行目削除＋詳細項目抽出
     window.handleCsv = (e) => {
         const file = e.target.files[0];
         const reader = new FileReader();
         reader.onload = (ev) => {
-            const lines = ev.target.result.split(/\r?\n/).filter(l => l.trim() !== "");
-            lines.shift(); // 1行目削除
+            let lines = ev.target.result.split(/\r?\n/).filter(l => l.trim() !== "");
+            lines.shift(); // 1行目を物理削除
 
             const cur = getCur();
             lines.forEach(line => {
@@ -46,33 +47,39 @@
                 cur.u.push({
                     id: 'U'+Date.now()+Math.random(),
                     name: c[0]||"",
-                    days: c[1]||"月火水木金土",
+                    days: c[1]||"",
                     address: c[2]||"",
                     school: c[3]||"",
-                    grade: c[4]||"", // 学年
-                    note: c[5]||"",
-                    defaultTime: c[6]||"", // 標準時間
-                    pickType: c[7]||"car", // car, self, parent
-                    dropType: c[8]||"car"
+                    grade: c[4]||"", // 学年(小○)
+                    note: c[5]||"", // アレルギー・重要
+                    defaultTime: c[6]||"",
+                    type: c[7]||"車両" // 車両, 自力, 保護者
                 });
             });
             save();
-            alert("読込完了：1行目削除・学年・時間・送迎区分を反映しました。");
+            alert("読込完了：1行目をスキップし、学年・重要事項を反映しました。");
         };
         reader.readAsText(file, 'Shift-JIS');
     };
 
-    // 自動作成ボタンのロジック
+    // 自動作成：曜日に基づき児童をルートに自動反映
     window.autoAssign = () => {
         const date = document.getElementById('dateInput').value;
-        const cur = getCur();
         const day = getDay();
-        const vs = cur.v.filter(v => v.days.includes(day));
-        if(!cur.r[date]) cur.r[date] = { "迎え": [], "送り": [] };
-        vs.forEach(v => {
-            const members = Array(8).fill().map(() => ({uId:"", time:"", absent:false}));
-            cur.r[date]["迎え"].push({ vName: v.name, driver: "", staff: "", members: JSON.parse(JSON.stringify(members)) });
-            cur.r[date]["送り"].push({ vName: v.name, driver: "", staff: "", members: JSON.parse(JSON.stringify(members)) });
+        const cur = getCur();
+        const dailyUsers = cur.u.filter(u => u.days.includes(day) && u.type === "車両");
+        
+        cur.r[date] = { "迎え": [], "送り": [] };
+        
+        // 各車両ごとにルート枠を作り、児童を上から順に詰め込む（8名ずつ）
+        cur.v.filter(v => v.days.includes(day)).forEach((v, vIdx) => {
+            const start = vIdx * 8;
+            const members = dailyUsers.slice(start, start + 8).map(u => ({ uId: u.id, time: u.defaultTime, absent: false }));
+            while(members.length < 8) members.push({ uId: "", time: "", absent: false });
+            
+            ["迎え", "送り"].forEach(t => {
+                cur.r[date][t].push({ vName: v.name, driver: "", staff: "", members: JSON.parse(JSON.stringify(members)) });
+            });
         });
         save();
     };
@@ -82,29 +89,33 @@
         const date = document.getElementById('dateInput').value;
         const day = getDay();
         const activeUids = new Set();
-        const staffOptions = cur.s.map(s => `<option value="${s.name}">${s.name}</option>`).join('');
+        const staffList = cur.s.filter(s => s.days.includes(day));
 
-        [0,1,2].forEach(i => document.getElementById(`btn-off-${i}`).className = `px-4 py-2 rounded font-bold ${state.curIdx===i?'bg-blue-600 text-white':'bg-slate-700 text-white'}`);
+        // タブ制御
+        [0,1,2].forEach(i => document.getElementById(`btn-off-${i}`).className = `px-3 py-1 rounded font-bold ${state.curIdx===i?'bg-blue-600 text-white':'bg-slate-700 text-white'}`);
         document.getElementById('officeTitle').innerText = `事業所 ${String.fromCharCode(65 + state.curIdx)}`;
 
+        // 携帯番号表示
         document.getElementById('phoneArea').innerHTML = cur.phones.map((p, i) => `
-            <div class="flex items-center gap-1 border-2 border-black px-2 bg-white h-8 text-[10px]">
-                <span>${p.label}</span>: <input class="w-28 font-black text-blue-800" value="${p.num}" onchange="getCur().phones[${i}].num=this.value;save()">
+            <div class="flex border border-black px-2 items-center bg-white h-7">
+                <span class="font-bold mr-1">${p.label}:</span>
+                <input class="w-32 font-black text-blue-700 text-sm" value="${p.num}" onchange="getCur().phones[${i}].num=this.value;save()">
             </div>
         `).join('');
 
+        // 送迎表メイン
         ['迎え', '送り'].forEach(type => {
             const routes = cur.r[date]?.[type] || [];
             document.getElementById(type + 'Area').innerHTML = routes.map((route, rIdx) => `
-                <div class="mb-4 border-2 border-black">
-                    <table class="w-full bg-slate-100 font-bold text-xs">
-                        <tr class="h-10">
-                            <td class="w-12 bg-black text-white">運転</td>
-                            <td class="w-32 bg-white"><select onchange="getCur().r['${date}']['${type}'][${rIdx}].driver=this.value;save()"><option value="">--</option>${staffOptions.replace(`value="${route.driver}"`, `value="${route.driver}" selected`)}</select></td>
-                            <td class="w-12 bg-gray-600 text-white">添乗</td>
-                            <td class="w-32 bg-white"><select onchange="getCur().r['${date}']['${type}'][${rIdx}].staff=this.value;save()"><option value="">--</option>${staffOptions.replace(`value="${route.staff}"`, `value="${route.staff}" selected`)}</select></td>
-                            <td class="w-12 bg-blue-800 text-white">車</td>
-                            <td class="bg-white"><input type="text" value="${route.vName}" onchange="getCur().r['${date}']['${type}'][${rIdx}].vName=this.value;save()"></td>
+                <div class="mb-4 border-2 border-black shadow">
+                    <table class="w-full bg-slate-50">
+                        <tr class="h-9">
+                            <td class="w-10 staff-header text-[9px]">運転</td>
+                            <td class="w-24"><select onchange="getCur().r['${date}']['${type}'][${rIdx}].driver=this.value;save()"><option value="">--</option>${staffList.map(s=>`<option value="${s.name}" ${route.driver===s.name?'selected':''}>${s.name}</option>`).join('')}</select></td>
+                            <td class="w-10 staff-header text-[9px]">添乗</td>
+                            <td class="w-24"><select onchange="getCur().r['${date}']['${type}'][${rIdx}].staff=this.value;save()"><option value="">--</option>${staffList.map(s=>`<option value="${s.name}" ${route.staff===s.name?'selected':''}>${s.name}</option>`).join('')}</select></td>
+                            <td class="w-10 bg-blue-800 text-white font-bold">車</td>
+                            <td class="font-black text-sm"><input type="text" value="${route.vName}" onchange="getCur().r['${date}']['${type}'][${rIdx}].vName=this.value;save()"></td>
                             <td class="w-8 no-print"><button onclick="getCur().r['${date}']['${type}'].splice(${rIdx},1);save()">×</button></td>
                         </tr>
                     </table>
@@ -112,17 +123,17 @@
                         ${route.members.map((m, mIdx) => {
                             const u = cur.u.find(x => x.id === m.uId) || {name: '', school: '', grade: ''};
                             if(m.uId && !m.absent) activeUids.add(m.uId);
-                            return `<tr class="h-12 border-t border-black ${m.absent?'bg-gray-100':''}">
-                                <td class="w-20"><input type="text" class="time-box" value="${m.time||''}" onchange="getCur().r['${date}']['${type}'][${rIdx}].members[${mIdx}].time=this.value;save()"></td>
-                                <td class="w-8 no-print"><button onclick="getCur().r['${date}']['${type}'][${rIdx}].members[${mIdx}].absent=!getCur().r['${date}']['${type}'][${rIdx}].members[${mIdx}].absent;save()" class="${m.absent?'bg-red-500 text-white':''}">欠</button></td>
-                                <td class="text-left px-4 font-bold">
-                                    <select class="w-40 inline-block" onchange="getCur().r['${date}']['${type}'][${rIdx}].members[${mIdx}].uId=this.value;save()">
-                                        <option value="">--児童選択--</option>
+                            return `<tr class="h-11 border-t border-black ${m.absent?'bg-gray-100':''}">
+                                <td class="w-16"><input type="text" class="time-box" value="${m.time||''}" onchange="getCur().r['${date}']['${type}'][${rIdx}].members[${mIdx}].time=this.value;save()"></td>
+                                <td class="w-8 no-print"><button onclick="getCur().r['${date}']['${type}'][${rIdx}].members[${mIdx}].absent=!getCur().r['${date}']['${type}'][${rIdx}].members[${mIdx}].absent;save()">欠</button></td>
+                                <td class="text-left px-3 font-bold">
+                                    <select class="w-32" onchange="getCur().r['${date}']['${type}'][${rIdx}].members[${mIdx}].uId=this.value;save()">
+                                        <option value="">--氏名--</option>
                                         ${cur.u.filter(x=>x.days.includes(day)).map(x=>`<option value="${x.id}" ${m.uId===x.id?'selected':''}>${x.name}</option>`).join('')}
                                     </select>
-                                    <span class="grade-badge">${u.grade}</span>
+                                    <span class="grade-highlight">${u.grade}</span>
                                 </td>
-                                <td class="text-left px-4 text-[10px] text-gray-500 font-bold">${u.school}</td>
+                                <td class="text-[9px] text-gray-500 font-bold px-2">${u.school}</td>
                             </tr>`;
                         }).join('')}
                     </table>
@@ -130,17 +141,24 @@
             `).join('');
         });
 
+        // 職員全員・出勤リスト
+        document.getElementById('allStaffArea').innerHTML = staffList.map(s => `
+            <div class="border border-black p-1 text-center font-bold text-sm bg-white">${s.name}</div>
+        `).join('') || '<div class="text-gray-400 text-[9px]">マスタで曜日を設定</div>';
+
+        // 重要リスト
         document.getElementById('attendList').innerHTML = cur.u.filter(u => u.days.includes(day) && activeUids.has(u.id)).map(u => `
-            <tr class="h-10 border-b border-black"><td>${u.name}</td><td class="grade-badge">${u.grade}</td><td class="text-[9px] font-bold">${u.school}</td><td class="text-red-600 font-black text-[10px]">${u.note||''}</td><td><input type="text"></td></tr>
+            <tr class="h-10"><td>${u.name}</td><td class="grade-highlight">${u.grade}</td><td class="text-[9px] font-bold">${u.school}</td><td class="text-red-600 font-black text-[10px]">${u.note||''}</td><td><input type="text"></td></tr>
         `).join('');
 
+        // マスタ描画
         const drawM = (type) => cur[type].map(i => `<tr>
             <td><input type="text" value="${i.name}" onchange="getCur().${type}.find(x=>x.id==='${i.id}').name=this.value;save()"></td>
             <td><div class="flex gap-1 justify-center">${["月","火","水","木","金","土"].map(d => `<span class="cursor-pointer px-1 ${i.days.includes(d)?'bg-blue-600 text-white':'bg-gray-200'}" onclick="const x=getCur().${type}.find(y=>y.id==='${i.id}'); x.days=x.days.includes('${d}')?x.days.replace('${d}',''):x.days+'${d}';save()">${d}</span>`).join('')}</div></td>
             ${type==='u'?`<td><input type="text" value="${i.address||''}" onchange="getCur().u.find(x=>x.id==='${i.id}').address=this.value;save()"></td>
             <td><input type="text" value="${i.school||''}" onchange="getCur().u.find(x=>x.id==='${i.id}').school=this.value;save()"></td>
             <td><input type="text" value="${i.grade||''}" onchange="getCur().u.find(x=>x.id==='${i.id}').grade=this.value;save()" class="font-bold text-blue-700"></td>
-            <td><select onchange="getCur().u.find(x=>x.id==='${i.id}').pickType=this.value;save()"><option value="car" ${i.pickType==='car'?'selected':''}>車両</option><option value="self" ${i.pickType==='self'?'selected':''}>自力</option><option value="parent" ${i.pickType==='parent'?'selected':''}>保護者</option></select></td>
+            <td><select onchange="getCur().u.find(x=>x.id==='${i.id}').type=this.value;save()"><option value="車両" ${i.type==='車両'?'selected':''}>車両</option><option value="自力" ${i.type==='自力'?'selected':''}>自力</option><option value="保護者" ${i.type==='保護者'?'selected':''}>保護者</option></select></td>
             <td><input type="text" value="${i.defaultTime||''}" onchange="getCur().u.find(x=>x.id==='${i.id}').defaultTime=this.value;save()"></td>
             <td><input type="text" value="${i.note||''}" onchange="getCur().u.find(x=>x.id==='${i.id}').note=this.value;save()" class="text-red-600"></td>`:''}
             <td><button onclick="getCur().${type}=getCur().${type}.filter(x=>x.id!=='${i.id}');save()">×</button></td>
@@ -157,9 +175,9 @@
     };
 </script>
 
-<header class="bg-slate-900 text-white p-2 no-print flex justify-between items-center shadow-lg">
+<header class="bg-slate-900 text-white p-2 no-print flex justify-between items-center shadow-md">
     <div class="flex items-center gap-4">
-        <h1 class="text-xl font-black italic text-blue-400">SHOJIN v22.0</h1>
+        <h1 class="text-xl font-black italic text-blue-400">SHOJIN v23.0</h1>
         <div class="flex bg-slate-800 rounded p-1 gap-1">
             <button onclick="state.curIdx=0;save()" id="btn-off-0">事業所A</button>
             <button onclick="state.curIdx=1;save()" id="btn-off-1">事業所B</button>
@@ -169,12 +187,12 @@
         <label class="bg-emerald-600 px-4 py-1 rounded font-bold cursor-pointer hover:bg-emerald-700">CSV読込<input type="file" onchange="handleCsv(event)" class="hidden"></label>
     </div>
     <div class="flex gap-2">
-        <button onclick="autoAssign()" class="bg-orange-600 px-4 py-1 rounded font-bold shadow-md">自動作成</button>
+        <button onclick="autoAssign()" class="bg-orange-600 px-4 py-1 rounded font-bold shadow-md">自動作成反映</button>
         <button onclick="window.print()" class="bg-blue-600 px-6 py-1 rounded font-bold shadow-md">印刷実行</button>
     </div>
 </header>
 
-<nav class="flex bg-slate-200 no-print border-b-2 border-slate-400">
+<nav class="flex bg-slate-200 no-print border-b-2 border-slate-400 shadow-inner">
     <button onclick="document.getElementById('scheduleTab').classList.add('active');document.getElementById('masterTab').classList.remove('active');" class="flex-1 py-3 font-black text-lg">運行計画表</button>
     <button onclick="document.getElementById('masterTab').classList.add('active');document.getElementById('scheduleTab').classList.remove('active');" class="flex-1 py-3 font-black text-lg border-l border-slate-300">マスタ管理</button>
 </nav>
@@ -182,23 +200,32 @@
 <main class="p-4 flex-1 bg-slate-100">
     <div id="scheduleTab" class="tab-content active">
         <div class="max-w-6xl mx-auto p-4 bg-white border-4 border-black min-h-screen shadow-2xl print-area">
-            <div class="flex justify-between items-start border-b-4 border-black mb-4">
-                <h2 class="text-2xl font-black italic underline decoration-blue-500"><span id="officeTitle">事業所A</span> 送迎運行計画表</h2>
+            <div class="flex justify-between items-start border-b-4 border-black mb-4 pb-1">
+                <h2 class="text-2xl font-black italic"><span id="officeTitle">事業所A</span> 送迎運行計画表</h2>
                 <div id="phoneArea" class="flex gap-4"></div>
             </div>
+            
             <div class="grid grid-cols-12 gap-6">
                 <div class="col-span-8">
-                    <div class="bg-blue-900 text-white p-1 mb-2 font-bold">■ 迎えルート</div>
+                    <div class="bg-blue-900 text-white p-1 mb-2 font-bold tracking-widest">■ 迎えルート</div>
                     <div id="迎えArea"></div>
-                    <div class="bg-red-900 text-white p-1 mb-2 mt-8 font-bold">■ 送りルート</div>
+                    <div class="bg-red-900 text-white p-1 mb-2 mt-8 font-bold tracking-widest">■ 送りルート</div>
                     <div id="送りArea"></div>
                 </div>
-                <div class="col-span-4 border-2 border-black p-2 bg-yellow-50">
-                    <div class="text-center font-bold bg-black text-white py-1 mb-2">重要事項・アレルギー等</div>
-                    <table>
-                        <thead class="bg-gray-200"><tr><th>氏名</th><th>学</th><th>学校</th><th>重要事項</th><th>備考</th></tr></thead>
-                        <tbody id="attendList"></tbody>
-                    </table>
+
+                <div class="col-span-4 space-y-6">
+                    <div class="border-2 border-black p-2 bg-yellow-50">
+                        <div class="text-center font-bold bg-black text-white py-1 mb-2">重要事項・アレルギー等</div>
+                        <table>
+                            <thead class="bg-gray-200 text-[9px]"><tr><th>氏名</th><th>学</th><th>学校</th><th>重要内容</th><th>備考</th></tr></thead>
+                            <tbody id="attendList"></tbody>
+                        </table>
+                    </div>
+
+                    <div class="border-2 border-black p-2 bg-slate-50">
+                        <div class="text-center font-bold bg-slate-700 text-white py-1 mb-2 uppercase tracking-tighter">本日の出勤スタッフ</div>
+                        <div id="allStaffArea" class="grid grid-cols-2 gap-2"></div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -206,15 +233,16 @@
 
     <div id="masterTab" class="tab-content">
         <div class="max-w-7xl mx-auto space-y-6 bg-white p-6 shadow-xl rounded-lg border-2">
-            <h3 class="font-black text-xl text-blue-800 border-b-2 mb-4">利用児童マスタ（CSV 1行目自動スキップ）</h3>
+            <h3 class="font-black text-xl text-blue-800 border-b-2 mb-4 pb-2">利用児童マスタ（CSV 1行目自動スキップ）</h3>
             <table>
                 <tr class="bg-slate-700 text-white text-[10px]"><th>氏名</th><th>曜日</th><th>住所</th><th>学校</th><th>学年</th><th>送迎区分</th><th>標準時間</th><th>重要事項</th><th>削</th></tr>
                 <tbody id="userTable"></tbody>
             </table>
-            <button onclick="const id='ID'+Date.now(); getCur().u.push({id, name:'新規', days:'月火水木金土', address:'', school:'', grade:'', pickType:'car', defaultTime:'', note:''}); save();" class="w-full border-2 border-dashed py-3 mt-4 text-slate-400 font-bold">+ 児童追加</button>
+            <button onclick="const id='ID'+Date.now(); getCur().u.push({id, name:'新規', days:'月火水木金土', address:'', school:'', grade:'', type:'車両', defaultTime:'', note:''}); save();" class="w-full border-2 border-dashed py-3 mt-4 text-slate-400 font-bold hover:bg-slate-50">+ 児童追加</button>
+            
             <div class="grid grid-cols-2 gap-6 mt-10">
-                <div><h3 class="font-black border-b text-blue-800">職員マスタ</h3><table><tbody id="staffTable"></tbody></table><button onclick="const id='ID'+Date.now(); getCur().s.push({id, name:'新規職員', days:'月火水木金土'}); save();" class="w-full border-2 py-1 mt-1 font-bold">+ 職員追加</button></div>
-                <div><h3 class="font-black border-b text-orange-800">車両マスタ</h3><table><tbody id="vehicleTable"></tbody></table><button onclick="const id='ID'+Date.now(); getCur().v.push({id, name:'新規車両', days:'月火水木金土'}); save();" class="w-full border-2 py-1 mt-1 font-bold">+ 車両追加</button></div>
+                <div><h3 class="font-black border-b-2 text-blue-800 mb-2">職員マスタ（曜日を設定すると一覧に出ます）</h3><table><tbody id="staffTable"></tbody></table><button onclick="const id='ID'+Date.now(); getCur().s.push({id, name:'新規スタッフ', days:'月火水木金土'}); save();" class="w-full border-2 py-1 mt-1 font-bold">+ 職員追加</button></div>
+                <div><h3 class="font-black border-b-2 text-orange-800 mb-2">車両マスタ（曜日を設定すると枠が出ます）</h3><table><tbody id="vehicleTable"></tbody></table><button onclick="const id='ID'+Date.now(); getCur().v.push({id, name:'新規車両', days:'月火水木金土'}); save();" class="w-full border-2 py-1 mt-1 font-bold">+ 車両追加</button></div>
             </div>
         </div>
     </div>
