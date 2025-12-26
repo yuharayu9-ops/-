@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>SHOJIN 運行管理 v9.1</title>
+    <title>SHOJIN 運行管理 v10.0</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { font-family: sans-serif; background: #f1f5f9; font-size: 10px; }
@@ -19,10 +19,10 @@
 <body class="min-h-screen flex flex-col">
 
 <script>
-    const KEY = 'SHOJIN_V91_FINAL';
+    const KEY = 'SHOJIN_V10_FINAL';
     const createOffice = () => ({ 
         u: [], v: [], s: [], r: {}, 
-        phones: [{label:"A携帯", num:""}, {label:"B携帯", num:""}] 
+        phones: [{label:"社用携帯1", num:""}, {label:"社用携帯2", num:""}] 
     });
 
     let state = JSON.parse(localStorage.getItem(KEY)) || {
@@ -36,27 +36,26 @@
 
     window.switchOffice = (idx) => { state.curIdx = idx; save(); };
 
-    // CSV読込：1行目を確実に削除してからループ
+    // CSV読込：1行目(i=0)を確実にスキップ
     window.handleCsv = (e) => {
         const file = e.target.files[0];
         if (!file) return;
         const reader = new FileReader();
         reader.onload = (ev) => {
-            let lines = ev.target.result.replace(/\r\n/g, '\n').split('\n');
-            lines.shift(); // ★1行目（見出し）を強制削除
+            const lines = ev.target.result.replace(/\r\n/g, '\n').split('\n');
             const cur = getCur();
-            lines.forEach(line => {
-                if (!line.trim()) return;
+            lines.forEach((line, i) => {
+                if (i === 0 || !line.trim()) return; // 1行目はひらがなヘッダーのため飛ばす
                 const c = line.split(',').map(s => s.replace(/"/g, '').trim());
                 cur.u.push({
                     id: 'U'+Date.now()+Math.random(),
                     name: c[0]||"", days: c[1]||"月火水木金土",
-                    address: c[2]||"", school: c[3]||"", grade: c[4]||"", tel: c[5]||"",
+                    address: c[2]||"", school: c[3]||"", grade: c[4]||"",
                     pickType: "car", dropType: "car", note: ""
                 });
             });
             save();
-            alert("CSV読み込みが完了しました（1行目をスキップしました）");
+            alert("読み込み完了（見出し行は除外しました）");
         };
         reader.readAsText(file, 'Shift-JIS');
     };
@@ -64,7 +63,7 @@
     window.addItem = (type) => {
         const cur = getCur();
         const id = 'ID'+Date.now();
-        if(type==='u') cur.u.push({id, name:"新規児童", days:"月火水木金土", address:"", school:"", grade:"", tel:"", pickType:"car", dropType:"car", note:""});
+        if(type==='u') cur.u.push({id, name:"新規児童", days:"月火水木金土", address:"", school:"", grade:"", pickType:"car", dropType:"car", note:""});
         if(type==='s') cur.s.push({id, name:"新規職員", days:"月火水木金土"});
         if(type==='v') cur.v.push({id, name:"新規車両", days:"月火水木金土"});
         save();
@@ -90,11 +89,11 @@
         [0,1,2].forEach(i => document.getElementById(`btn-off-${i}`).className = `px-4 py-1 rounded ${state.curIdx===i?'office-active':'bg-slate-700 text-white'}`);
         document.getElementById('officeTitle').innerText = `事業所 ${String.fromCharCode(65 + state.curIdx)}`;
 
-        // 社用携帯の反映
+        // 社用携帯
         document.getElementById('phoneArea').innerHTML = cur.phones.map((p, i) => `
             <div class="flex items-center gap-1 border border-black px-2 bg-white">
-                <input class="w-12 font-bold text-[8px]" value="${p.label}" onchange="getCur().phones[${i}].label=this.value;save()">:
-                <input class="w-24 font-bold text-[10px]" value="${p.num}" onchange="getCur().phones[${i}].num=this.value;save()" placeholder="080-0000-0000">
+                <input class="w-16 font-bold text-[8px]" value="${p.label}" onchange="getCur().phones[${i}].label=this.value;save()">:
+                <input class="w-24 font-bold text-[10px]" value="${p.num}" onchange="getCur().phones[${i}].num=this.value;save()" placeholder="連絡先番号">
             </div>
         `).join('');
 
@@ -121,7 +120,7 @@
                                 <td class="w-10 bg-yellow-50"><input type="text" value="${m.time||''}" onchange="getCur().r['${date}']['${type}'][${rIdx}].members[${mIdx}].time=this.value;save()"></td>
                                 <td class="w-6 no-print"><button onclick="getCur().r['${date}']['${type}'][${rIdx}].members[${mIdx}].absent=!getCur().r['${date}']['${type}'][${rIdx}].members[${mIdx}].absent;save()" class="border px-1 ${m.absent?'is-absent':''}">欠</button></td>
                                 <td class="text-left font-black px-1 w-32">${u.name}</td>
-                                <td class="w-10 font-bold">${u.grade}</td>
+                                <td class="w-10 font-black text-blue-700">${u.grade}</td>
                                 <td class="text-left text-[9px] px-1">${u.school}</td>
                             </tr>`;
                         }).join('')}
@@ -138,7 +137,7 @@
         document.getElementById('OthersArea').innerHTML = renderOthers('迎え') + renderOthers('送り');
 
         document.getElementById('attendList').innerHTML = cur.u.filter(u => u.days.includes(day) && activeUids.has(u.id)).map(u => `
-            <tr class="h-8 border-b text-[9px]"><td>${u.name}</td><td>${u.grade}</td><td>${u.school}</td><td class="text-red-600 font-bold">${u.note||''}</td><td><input type="text"></td></tr>
+            <tr class="h-8 border-b text-[9px]"><td>${u.name}</td><td class="font-bold">${u.grade}</td><td>${u.school}</td><td class="text-red-600 font-bold">${u.note||''}</td><td><input type="text"></td></tr>
         `).join('');
 
         const drawM = (type) => cur[type].map(i => `<tr>
@@ -147,7 +146,6 @@
             ${type==='u'?`<td><input type="text" value="${i.address||''}" onchange="getCur().u.find(x=>x.id==='${i.id}').address=this.value;save()"></td>
             <td><input type="text" value="${i.school||''}" onchange="getCur().u.find(x=>x.id==='${i.id}').school=this.value;save()"></td>
             <td><input type="text" value="${i.grade||''}" onchange="getCur().u.find(x=>x.id==='${i.id}').grade=this.value;save()"></td>
-            <td><input type="text" value="${i.tel||''}" onchange="getCur().u.find(x=>x.id==='${i.id}').tel=this.value;save()"></td>
             <td><select onchange="getCur().u.find(x=>x.id==='${i.id}').pickType=this.value;save()"><option value="car" ${i.pickType==='car'?'selected':''}>車両</option><option value="self" ${i.pickType==='self'?'selected':''}>自力</option><option value="parent" ${i.pickType==='parent'?'selected':''}>保護者</option></select></td>
             <td><select onchange="getCur().u.find(x=>x.id==='${i.id}').dropType=this.value;save()"><option value="car" ${i.dropType==='car'?'selected':''}>車両</option><option value="self" ${i.dropType==='self'?'selected':''}>自力</option><option value="parent" ${i.dropType==='parent'?'selected':''}>保護者</option></select></td>
             <td><input type="text" value="${i.note}" onchange="getCur().u.find(x=>x.id==='${i.id}').note=this.value;save()"></td>`:''}
@@ -165,9 +163,9 @@
     };
 </script>
 
-<header class="bg-slate-900 text-white p-2 no-print flex justify-between items-center shadow-lg">
+<header class="bg-slate-900 text-white p-2 no-print flex justify-between items-center">
     <div class="flex items-center gap-2">
-        <h1 class="text-lg font-black text-blue-400 italic">SHOJIN v9.1</h1>
+        <h1 class="text-lg font-black text-blue-400 italic">SHOJIN v10.0</h1>
         <div class="flex bg-slate-800 rounded p-1 gap-1">
             <button id="btn-off-0" onclick="switchOffice(0)">事業所A</button>
             <button id="btn-off-1" onclick="switchOffice(1)">事業所B</button>
@@ -190,10 +188,8 @@
     <div id="scheduleTab" class="tab-content active">
         <div class="max-w-5xl mx-auto p-4 bg-white shadow border border-black min-h-screen">
             <div class="flex justify-between items-start border-b-2 border-black mb-2">
-                <div>
-                    <h2 class="text-xl font-black"><span id="officeTitle">事業所A</span> 送迎運行計画表</h2>
-                </div>
-                <div id="phoneArea" class="flex gap-2"></div>
+                <h2 class="text-xl font-black"><span id="officeTitle">事業所A</span> 送迎運行計画表</h2>
+                <div id="phoneArea" class="flex gap-2 no-print"></div>
             </div>
 
             <div class="grid grid-cols-12 gap-3">
@@ -219,7 +215,7 @@
         <div class="max-w-7xl mx-auto space-y-4 bg-white p-4 shadow rounded">
             <h3 class="font-black text-blue-800 border-b">利用児童名簿</h3>
             <table>
-                <tr class="bg-slate-700 text-white text-[8px]"><th>氏名</th><th>曜日</th><th>住所</th><th>学校</th><th>学年</th><th>連絡先</th><th>迎え</th><th>送り</th><th>重要事項</th><th>×</th></tr>
+                <tr class="bg-slate-700 text-white text-[8px]"><th>氏名</th><th>曜日</th><th>住所</th><th>学校</th><th>学年</th><th>迎え</th><th>送り</th><th>重要事項</th><th>×</th></tr>
                 <tbody id="userTable"></tbody>
             </table>
             <button onclick="addItem('u')" class="w-full border-2 border-dashed py-1 text-gray-400 text-xs">+ 児童追加</button>
