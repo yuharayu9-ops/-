@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>SHOJIN 運行管理 v9.0</title>
+    <title>SHOJIN 運行管理 v9.1</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { font-family: sans-serif; background: #f1f5f9; font-size: 10px; }
@@ -19,8 +19,11 @@
 <body class="min-h-screen flex flex-col">
 
 <script>
-    const KEY = 'SHOJIN_V9_STABLE';
-    const createOffice = () => ({ u: [], v: [], s: [], r: {} });
+    const KEY = 'SHOJIN_V91_FINAL';
+    const createOffice = () => ({ 
+        u: [], v: [], s: [], r: {}, 
+        phones: [{label:"A携帯", num:""}, {label:"B携帯", num:""}] 
+    });
 
     let state = JSON.parse(localStorage.getItem(KEY)) || {
         curIdx: 0,
@@ -33,16 +36,17 @@
 
     window.switchOffice = (idx) => { state.curIdx = idx; save(); };
 
-    // CSV読込（1行目スキップを徹底）
+    // CSV読込：1行目を確実に削除してからループ
     window.handleCsv = (e) => {
         const file = e.target.files[0];
         if (!file) return;
         const reader = new FileReader();
         reader.onload = (ev) => {
-            const lines = ev.target.result.replace(/\r\n/g, '\n').split('\n');
+            let lines = ev.target.result.replace(/\r\n/g, '\n').split('\n');
+            lines.shift(); // ★1行目（見出し）を強制削除
             const cur = getCur();
-            lines.forEach((line, i) => {
-                if (i === 0 || !line.trim()) return; // 1行目は飛ばす
+            lines.forEach(line => {
+                if (!line.trim()) return;
                 const c = line.split(',').map(s => s.replace(/"/g, '').trim());
                 cur.u.push({
                     id: 'U'+Date.now()+Math.random(),
@@ -52,11 +56,11 @@
                 });
             });
             save();
+            alert("CSV読み込みが完了しました（1行目をスキップしました）");
         };
         reader.readAsText(file, 'Shift-JIS');
     };
 
-    // マスタ追加機能
     window.addItem = (type) => {
         const cur = getCur();
         const id = 'ID'+Date.now();
@@ -68,30 +72,11 @@
 
     window.delItem = (type, id) => { if(confirm("削除しますか？")){ getCur()[type] = getCur()[type].filter(x=>x.id!==id); save(); } };
 
-    // 運行表ルート操作
     window.addRoute = (type) => {
         const date = document.getElementById('dateInput').value;
         const cur = getCur();
         if(!cur.r[date]) cur.r[date] = { "迎え": [], "送り": [] };
         cur.r[date][type].push({ vName: "新規ルート", driver: "", staff: "", members: [] });
-        save();
-    };
-
-    window.autoAssign = () => {
-        const date = document.getElementById('dateInput').value;
-        const cur = getCur();
-        const day = getDay();
-        const vs = cur.v.filter(v => v.days.includes(day));
-        const us = cur.u.filter(u => u.days.includes(day));
-        cur.r[date] = { "迎え": [], "送り": [] };
-        vs.forEach(v => {
-            cur.r[date]["迎え"].push({ vName: v.name, driver: "", staff: "", members: [] });
-            cur.r[date]["送り"].push({ vName: v.name, driver: "", staff: "", members: [] });
-        });
-        if(vs.length > 0) {
-            us.filter(u=>u.pickType==='car').forEach((u,i) => cur.r[date]["迎え"][i%vs.length].members.push({uId:u.id, time:"10:00", absent:false}));
-            us.filter(u=>u.dropType==='car').forEach((u,i) => cur.r[date]["送り"][i%vs.length].members.push({uId:u.id, time:"16:00", absent:false}));
-        }
         save();
     };
 
@@ -104,6 +89,14 @@
 
         [0,1,2].forEach(i => document.getElementById(`btn-off-${i}`).className = `px-4 py-1 rounded ${state.curIdx===i?'office-active':'bg-slate-700 text-white'}`);
         document.getElementById('officeTitle').innerText = `事業所 ${String.fromCharCode(65 + state.curIdx)}`;
+
+        // 社用携帯の反映
+        document.getElementById('phoneArea').innerHTML = cur.phones.map((p, i) => `
+            <div class="flex items-center gap-1 border border-black px-2 bg-white">
+                <input class="w-12 font-bold text-[8px]" value="${p.label}" onchange="getCur().phones[${i}].label=this.value;save()">:
+                <input class="w-24 font-bold text-[10px]" value="${p.num}" onchange="getCur().phones[${i}].num=this.value;save()" placeholder="080-0000-0000">
+            </div>
+        `).join('');
 
         ['迎え', '送り'].forEach(type => {
             const routes = cur.r[date]?.[type] || [];
@@ -128,7 +121,7 @@
                                 <td class="w-10 bg-yellow-50"><input type="text" value="${m.time||''}" onchange="getCur().r['${date}']['${type}'][${rIdx}].members[${mIdx}].time=this.value;save()"></td>
                                 <td class="w-6 no-print"><button onclick="getCur().r['${date}']['${type}'][${rIdx}].members[${mIdx}].absent=!getCur().r['${date}']['${type}'][${rIdx}].members[${mIdx}].absent;save()" class="border px-1 ${m.absent?'is-absent':''}">欠</button></td>
                                 <td class="text-left font-black px-1 w-32">${u.name}</td>
-                                <td class="w-6 font-bold">${u.grade}</td>
+                                <td class="w-10 font-bold">${u.grade}</td>
                                 <td class="text-left text-[9px] px-1">${u.school}</td>
                             </tr>`;
                         }).join('')}
@@ -137,7 +130,6 @@
             `).join('');
         });
 
-        // 自力・保護者
         const renderOthers = (type) => {
             const key = type === '迎え' ? 'pickType' : 'dropType';
             const others = cur.u.filter(u => u.days.includes(day) && u[key] !== 'car');
@@ -145,12 +137,10 @@
         };
         document.getElementById('OthersArea').innerHTML = renderOthers('迎え') + renderOthers('送り');
 
-        // 重要リスト
         document.getElementById('attendList').innerHTML = cur.u.filter(u => u.days.includes(day) && activeUids.has(u.id)).map(u => `
             <tr class="h-8 border-b text-[9px]"><td>${u.name}</td><td>${u.grade}</td><td>${u.school}</td><td class="text-red-600 font-bold">${u.note||''}</td><td><input type="text"></td></tr>
         `).join('');
 
-        // マスタ描画
         const drawM = (type) => cur[type].map(i => `<tr>
             <td><input type="text" value="${i.name}" onchange="getCur().${type}.find(x=>x.id==='${i.id}').name=this.value;save()"></td>
             <td><div class="flex gap-1 justify-center">${["月","火","水","木","金","土"].map(d=>`<span class="cursor-pointer ${i.days.includes(d)?'text-blue-600 font-bold':'text-gray-300'}" onclick="const x=getCur().${type}.find(y=>y.id==='${i.id}'); x.days=x.days.includes('${d}')?x.days.replace('${d}',''):x.days+'${d}';save()">${d}</span>`).join('')}</div></td>
@@ -161,7 +151,7 @@
             <td><select onchange="getCur().u.find(x=>x.id==='${i.id}').pickType=this.value;save()"><option value="car" ${i.pickType==='car'?'selected':''}>車両</option><option value="self" ${i.pickType==='self'?'selected':''}>自力</option><option value="parent" ${i.pickType==='parent'?'selected':''}>保護者</option></select></td>
             <td><select onchange="getCur().u.find(x=>x.id==='${i.id}').dropType=this.value;save()"><option value="car" ${i.dropType==='car'?'selected':''}>車両</option><option value="self" ${i.dropType==='self'?'selected':''}>自力</option><option value="parent" ${i.dropType==='parent'?'selected':''}>保護者</option></select></td>
             <td><input type="text" value="${i.note}" onchange="getCur().u.find(x=>x.id==='${i.id}').note=this.value;save()"></td>`:''}
-            <td><button onclick="delItem('${type}','${i.id}')" class="text-red-500">×</button></td>
+            <td><button onclick="delItem('${type}','${i.id}')" class="text-red-500 font-bold">×</button></td>
         </tr>`).join('');
         document.getElementById('userTable').innerHTML = drawM('u');
         document.getElementById('staffTable').innerHTML = drawM('s');
@@ -177,7 +167,7 @@
 
 <header class="bg-slate-900 text-white p-2 no-print flex justify-between items-center shadow-lg">
     <div class="flex items-center gap-2">
-        <h1 class="text-lg font-black text-blue-400 italic">SHOJIN v9.0</h1>
+        <h1 class="text-lg font-black text-blue-400 italic">SHOJIN v9.1</h1>
         <div class="flex bg-slate-800 rounded p-1 gap-1">
             <button id="btn-off-0" onclick="switchOffice(0)">事業所A</button>
             <button id="btn-off-1" onclick="switchOffice(1)">事業所B</button>
@@ -187,7 +177,6 @@
         <label class="bg-emerald-600 px-3 py-1 rounded font-bold cursor-pointer text-[10px]">CSV読込<input type="file" onchange="handleCsv(event)" class="hidden"></label>
     </div>
     <div class="flex gap-2">
-        <button onclick="autoAssign()" class="bg-orange-600 px-4 py-1 rounded-full font-bold text-xs text-white">自動振分</button>
         <button onclick="window.print()" class="bg-blue-600 px-4 py-1 rounded-full font-bold text-xs">印刷</button>
     </div>
 </header>
@@ -200,14 +189,18 @@
 <main class="p-2 flex-1 overflow-auto bg-slate-100">
     <div id="scheduleTab" class="tab-content active">
         <div class="max-w-5xl mx-auto p-4 bg-white shadow border border-black min-h-screen">
-            <h2 class="text-xl font-black border-b-2 border-black mb-2 flex justify-between">
-                <span id="officeTitle">事業所A</span><span>送迎運行計画表</span>
-            </h2>
+            <div class="flex justify-between items-start border-b-2 border-black mb-2">
+                <div>
+                    <h2 class="text-xl font-black"><span id="officeTitle">事業所A</span> 送迎運行計画表</h2>
+                </div>
+                <div id="phoneArea" class="flex gap-2"></div>
+            </div>
+
             <div class="grid grid-cols-12 gap-3">
                 <div class="col-span-8">
-                    <div class="flex justify-between bg-blue-900 text-white p-1 text-[8px]">■ 迎え <button onclick="addRoute('迎え')" class="no-print bg-white text-blue-900 px-2 rounded font-bold">+ 車両ルート追加</button></div>
+                    <div class="flex justify-between bg-blue-900 text-white p-1 text-[8px]">■ 迎え <button onclick="addRoute('迎え')" class="no-print bg-white text-blue-900 px-2 rounded font-bold">+ 追加</button></div>
                     <div id="迎えArea"></div>
-                    <div class="flex justify-between bg-red-900 text-white p-1 text-[8px] mt-4">■ 送り <button onclick="addRoute('送り')" class="no-print bg-white text-red-900 px-2 rounded font-bold">+ 車両ルート追加</button></div>
+                    <div class="flex justify-between bg-red-900 text-white p-1 text-[8px] mt-4">■ 送り <button onclick="addRoute('送り')" class="no-print bg-white text-red-900 px-2 rounded font-bold">+ 追加</button></div>
                     <div id="送りArea"></div>
                     <div id="OthersArea" class="mt-2"></div>
                 </div>
@@ -231,16 +224,8 @@
             </table>
             <button onclick="addItem('u')" class="w-full border-2 border-dashed py-1 text-gray-400 text-xs">+ 児童追加</button>
             <div class="grid grid-cols-2 gap-4">
-                <div>
-                    <h3 class="font-black text-blue-800 border-b">職員マスタ</h3>
-                    <table><tbody id="staffTable"></tbody></table>
-                    <button onclick="addItem('s')" class="w-full border py-1 text-gray-400 text-[10px] mt-1">+ 職員追加</button>
-                </div>
-                <div>
-                    <h3 class="font-black text-orange-800 border-b">車両マスタ</h3>
-                    <table><tbody id="vehicleTable"></tbody></table>
-                    <button onclick="addItem('v')" class="w-full border py-1 text-gray-400 text-[10px] mt-1">+ 車両追加</button>
-                </div>
+                <div><h3 class="font-black text-blue-800 border-b">職員</h3><table><tbody id="staffTable"></tbody></table><button onclick="addItem('s')" class="w-full border py-1 text-gray-400 text-[10px] mt-1">+ 追加</button></div>
+                <div><h3 class="font-black text-orange-800 border-b">車両</h3><table><tbody id="vehicleTable"></tbody></table><button onclick="addItem('v')" class="w-full border py-1 text-gray-400 text-[10px] mt-1">+ 追加</button></div>
             </div>
         </div>
     </div>
