@@ -2,10 +2,10 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>運行管理システム v29.0</title>
+    <title>運行管理システム v29.1 - CSV安定版</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        body { font-family: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", "Hiragino Sans", sans-serif; background: #f1f5f9; font-size: 10px; color: #000; }
+        body { font-family: sans-serif; background: #f1f5f9; font-size: 10px; color: #000; }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
         table { border-collapse: collapse; width: 100%; border: 2px solid black; background: white; }
@@ -23,9 +23,10 @@
 <body class="min-h-screen">
 
 <script>
-    const STORAGE_KEY = 'SHOJIN_V29_PRO';
+    const STORAGE_KEY = 'SHOJIN_V29_1_STABLE';
     const OFFICE_NAMES = ["星の村", "カラフル", "プリズム"];
     
+    // 学年変換ロジック
     const formatGrade = (g) => {
         if(!g) return "";
         if(/[小中高]/.test(g)) return g;
@@ -52,38 +53,37 @@
     const getCur = () => state.offices[state.curIdx];
     const getDay = () => ["日","月","火","水","木","金","土"][new Date(document.getElementById('dateInput').value).getDay()];
 
-    // CSV読込の修正
+    // CSV読込：ご提示いただいたファイル形式 (氏名,曜日,,学校,学年,アレルギー,区分,時間...) に完全対応
     window.handleCsv = (e) => {
         const file = e.target.files[0];
         if(!file) return;
         const reader = new FileReader();
         reader.onload = (ev) => {
-            try {
-                const lines = ev.target.result.split(/\r?\n/).filter(l => l.trim() !== "");
-                lines.shift();
-                const cur = getCur();
-                lines.forEach(line => {
-                    const c = line.split(',').map(s => s.replace(/"/g, '').trim());
-                    if (c.length < 2) return;
-                    cur.u.push({
-                        id: 'U'+Date.now()+Math.random(),
-                        name: c[1]||c[0]||"", // 2列目か1列目
-                        school: c[2]||"",
-                        grade: formatGrade(c[3]||""),
-                        days: "月火水木金土",
-                        type: "車両", 
-                        inTime: "", outTime: "",
-                        note: c[5]||"" // アレルギー等
-                    });
+            const lines = ev.target.result.split(/\r?\n/).filter(l => l.trim() !== "");
+            lines.shift(); // ヘッダー
+            const cur = getCur();
+            lines.forEach(line => {
+                const c = line.split(',').map(s => s.replace(/"/g, '').trim());
+                if (c.length < 2) return;
+                cur.u.push({
+                    id: 'U'+Date.now()+Math.random(),
+                    name: c[0] || "",        // 1列目: 氏名
+                    days: c[1] || "月火水木金土", // 2列目: 曜日
+                    school: c[3] || "",      // 4列目: 学校名
+                    grade: formatGrade(c[4]), // 5列目: 学年
+                    note: c[5] || "",        // 6列目: アレルギー・特記事項
+                    type: c[6] || "車両",     // 7列目: 区分
+                    inTime: c[7] || "",      // 8列目: 迎え時間
+                    outTime: c[9] || ""      // 10列目: 送り時間
                 });
-                save();
-                alert("読込成功");
-            } catch(err) { alert("CSVの形式を確認してください"); }
+            });
+            save();
+            alert("CSVを読み込みました。");
         };
         reader.readAsText(file, 'Shift-JIS');
     };
 
-    // 車両ルート追加の完全修正
+    // 車両ルート追加 (修正版)
     window.addRoute = (type) => {
         const date = document.getElementById('dateInput').value;
         const cur = getCur();
@@ -99,7 +99,7 @@
         const date = document.getElementById('dateInput').value;
         const day = getDay();
         const cur = getCur();
-        const users = cur.u.filter(u => u.days.includes(day));
+        const users = cur.u.filter(u => u.days.includes(day) && u.type === "車両");
         const vehicles = cur.v.filter(v => v.days.includes(day));
         if(vehicles.length === 0) { alert("車両マスタを登録してください"); return; }
         
@@ -108,7 +108,7 @@
             cur.r[date][type] = vehicles.map((v, i) => {
                 const start = i * 6;
                 const members = users.slice(start, start + 6).map(u => ({
-                    uId: u.id, time: "", note: ""
+                    uId: u.id, time: type === "迎え" ? u.inTime : u.outTime, note: ""
                 }));
                 while(members.length < 6) members.push({ uId: "", time: "", note: "" });
                 return { vName: v.name, driver: "", staff: "", phoneId: "", members };
@@ -130,23 +130,19 @@
         ['迎え', '送り'].forEach(type => {
             const routes = cur.r[date]?.[type] || [];
             document.getElementById(type + 'Area').innerHTML = routes.map((route, rIdx) => {
-                const selStaff = staffs.find(s => s.name === route.staff);
                 const selPhone = phones.find(p => p.id == route.phoneId);
-                const staffDisplay = route.staff + (selPhone ? `(${selPhone.label})` : "");
-
                 return `
                 <div class="mb-4 border-2 border-black">
                     <table class="w-full">
-                        <tr class="bg-gray-50 text-[11px] font-bold">
-                            <td colspan="2" class="w-1/4">${type === '迎え' ? '便名' : '便名'}：<input type="text" class="w-2/3 border-b border-black text-center" value="${route.vName}" onchange="getCur().r['${date}']['${type}'][${rIdx}].vName=this.value;save()"></td>
-                            <td colspan="4" class="text-left px-2">車両：${route.vName}</td>
+                        <tr class="bg-gray-50 text-[11px] font-bold text-left">
+                            <td colspan="6" class="px-2">便名：<input type="text" class="w-32 border-b border-black text-center" value="${route.vName}" onchange="getCur().r['${date}']['${type}'][${rIdx}].vName=this.value;save()"> ／ 車両：${route.vName}</td>
                         </tr>
                         <tr>
                             <td class="label-cell">運転</td>
-                            <td class="w-32"><select class="w-full text-center" onchange="getCur().r['${date}']['${type}'][${rIdx}].driver=this.value;save()"><option value="">--</option>${staffs.map(s=>`<option value="${s.name}" ${route.driver===s.name?'selected':''}>${s.name}</option>`).join('')}</select></td>
+                            <td class="w-32"><select class="w-full" onchange="getCur().r['${date}']['${type}'][${rIdx}].driver=this.value;save()"><option value="">--</option>${staffs.map(s=>`<option value="${s.name}" ${route.driver===s.name?'selected':''}>${s.name}</option>`).join('')}</select></td>
                             ${[0, 1].map(i => `
                                 <td class="w-16"><input type="text" class="time-input" value="${route.members[i].time}" onchange="getCur().r['${date}']['${type}'][${rIdx}].members[${i}].time=this.value;save()"></td>
-                                <td class="w-48 text-left px-1 border-r-2 border-black"><select class="w-24" onchange="getCur().r['${date}']['${type}'][${rIdx}].members[${i}].uId=this.value;save()"><option value="">--</option>${cur.u.map(x=>`<option value="${x.id}" ${route.members[i].uId===x.id?'selected':''}>${x.name}</option>`).join('')}</select><span class="grade-text">${formatGrade(cur.u.find(u=>u.id===route.members[i].uId)?.grade)}</span></td>
+                                <td class="w-48 text-left px-1 border-r-2 border-black"><select class="w-24 text-[9px]" onchange="getCur().r['${date}']['${type}'][${rIdx}].members[${i}].uId=this.value;save()"><option value="">--</option>${cur.u.filter(u=>u.days.includes(day)).map(x=>`<option value="${x.id}" ${route.members[i].uId===x.id?'selected':''}>${x.name}</option>`).join('')}</select><span class="grade-text">${formatGrade(cur.u.find(u=>u.id===route.members[i].uId)?.grade)}</span></td>
                             `).join('')}
                         </tr>
                         <tr>
@@ -157,15 +153,15 @@
                             </td>
                             ${[2, 3].map(i => `
                                 <td class="w-16"><input type="text" class="time-input" value="${route.members[i].time}" onchange="getCur().r['${date}']['${type}'][${rIdx}].members[${i}].time=this.value;save()"></td>
-                                <td class="w-48 text-left px-1 border-r-2 border-black"><select class="w-24" onchange="getCur().r['${date}']['${type}'][${rIdx}].members[${i}].uId=this.value;save()"><option value="">--</option>${cur.u.map(x=>`<option value="${x.id}" ${route.members[i].uId===x.id?'selected':''}>${x.name}</option>`).join('')}</select><span class="grade-text">${formatGrade(cur.u.find(u=>u.id===route.members[i].uId)?.grade)}</span></td>
+                                <td class="w-48 text-left px-1 border-r-2 border-black"><select class="w-24 text-[9px]" onchange="getCur().r['${date}']['${type}'][${rIdx}].members[${i}].uId=this.value;save()"><option value="">--</option>${cur.u.filter(u=>u.days.includes(day)).map(x=>`<option value="${x.id}" ${route.members[i].uId===x.id?'selected':''}>${x.name}</option>`).join('')}</select><span class="grade-text">${formatGrade(cur.u.find(u=>u.id===route.members[i].uId)?.grade)}</span></td>
                             `).join('')}
                         </tr>
                         <tr>
                             <td class="label-cell">備考</td>
-                            <td class="text-[8px]">${selPhone ? selPhone.num : ''}</td>
+                            <td class="text-[8px] font-bold">${selPhone ? selPhone.num : ''}</td>
                             ${[4, 5].map(i => `
                                 <td class="w-16"><input type="text" class="time-input" value="${route.members[i].time}" onchange="getCur().r['${date}']['${type}'][${rIdx}].members[${i}].time=this.value;save()"></td>
-                                <td class="w-48 text-left px-1 border-r-2 border-black"><select class="w-24" onchange="getCur().r['${date}']['${type}'][${rIdx}].members[${i}].uId=this.value;save()"><option value="">--</option>${cur.u.map(x=>`<option value="${x.id}" ${route.members[i].uId===x.id?'selected':''}>${x.name}</option>`).join('')}</select><span class="grade-text">${formatGrade(cur.u.find(u=>u.id===route.members[i].uId)?.grade)}</span></td>
+                                <td class="w-48 text-left px-1 border-r-2 border-black"><select class="w-24 text-[9px]" onchange="getCur().r['${date}']['${type}'][${rIdx}].members[${i}].uId=this.value;save()"><option value="">--</option>${cur.u.filter(u=>u.days.includes(day)).map(x=>`<option value="${x.id}" ${route.members[i].uId===x.id?'selected':''}>${x.name}</option>`).join('')}</select><span class="grade-text">${formatGrade(cur.u.find(u=>u.id===route.members[i].uId)?.grade)}</span></td>
                             `).join('')}
                             <td class="no-print w-6"><button onclick="getCur().r['${date}']['${type}'].splice(${rIdx},1);save()">×</button></td>
                         </tr>
@@ -174,13 +170,13 @@
             }).join('');
         });
 
-        // 重要事項・アレルギーリスト
+        // 利用者一覧
         const activeTodayUsers = cur.u.filter(u => u.days.includes(day));
         document.getElementById('attendList').innerHTML = activeTodayUsers.map(u => `
             <tr class="h-6"><td>${u.name}</td><td>${u.school}</td><td class="grade-text">${formatGrade(u.grade)}</td><td class="text-red-600 font-bold">${u.note||''}</td><td></td></tr>
         `).join('');
 
-        // マスタ描画
+        // マスタ
         const drawM = (type, list) => list.map(i => `<tr>
             <td><input type="text" class="w-full" value="${i.name}" onchange="getCur().${type}.find(x=>x.id==='${i.id}').name=this.value;save()"></td>
             <td><div class="flex gap-1 justify-center">${["月","火","水","木","金","土"].map(d => `<span class="cursor-pointer px-1 text-[9px] ${i.days.includes(d)?'bg-blue-600 text-white':'bg-gray-200'}" onclick="const x=getCur().${type}.find(y=>y.id==='${i.id}'); x.days=x.days.includes('${d}')?x.days.replace('${d}',''):x.days+'${d}';save()">${d}</span>`).join('')}</div></td>
@@ -197,7 +193,7 @@
     window.addMaster = (type) => {
         const cur = getCur();
         const obj = { id: 'ID'+Date.now()+Math.random(), name: '新規', days: '月火水木金土' };
-        if(type==='u') Object.assign(obj, { school:'', grade:'', note:'' });
+        if(type==='u') Object.assign(obj, { school:'', grade:'', note:'', type:'車両' });
         cur[type].push(obj);
         save();
     };
@@ -211,7 +207,7 @@
 
 <header class="bg-slate-900 text-white p-2 no-print flex justify-between items-center shadow-lg">
     <div class="flex items-center gap-4">
-        <h1 class="text-xl font-black italic text-blue-400">運行管理 v29.0 PRO</h1>
+        <h1 class="text-xl font-black italic text-blue-400">運行管理 v29.1</h1>
         <div class="flex bg-slate-800 rounded p-1 gap-1">
             <button onclick="state.curIdx=0;save()" id="btn-off-0">星の村</button>
             <button onclick="state.curIdx=1;save()" id="btn-off-1">カラフル</button>
@@ -220,9 +216,9 @@
         <input type="date" id="dateInput" onchange="render()" class="text-black bg-white px-2 py-0.5 rounded font-bold">
         <label class="bg-emerald-600 px-4 py-1 rounded font-bold cursor-pointer text-xs">CSV読込<input type="file" onchange="handleCsv(event)" class="hidden"></label>
     </div>
-    <div class="flex gap-2 text-xs font-bold">
-        <button onclick="autoAssign()" class="bg-orange-600 px-4 py-1 rounded">自動作成</button>
-        <button onclick="window.print()" class="bg-blue-600 px-6 py-1 rounded">印刷</button>
+    <div class="flex gap-2">
+        <button onclick="autoAssign()" class="bg-orange-600 px-4 py-1 rounded font-bold text-xs">自動作成</button>
+        <button onclick="window.print()" class="bg-blue-600 px-6 py-1 rounded font-bold text-xs">印刷</button>
     </div>
 </header>
 
@@ -237,21 +233,21 @@
             <h2 class="text-center text-2xl font-bold mb-4">【<span id="officeTitle"></span>】 送迎運行計画表</h2>
             
             <div class="flex justify-between items-center bg-blue-900 text-white p-1 mb-2">
-                <span class="font-bold">■ 迎え便 / 南便など</span>
-                <button onclick="addRoute('迎え')" class="no-print bg-white text-blue-900 px-2 rounded text-[10px] font-bold">+便追加</button>
+                <span class="font-bold">■ 迎え便</span>
+                <button onclick="addRoute('迎え')" class="no-print bg-white text-blue-900 px-2 rounded text-[10px] font-bold">+便ルート追加</button>
             </div>
             <div id="迎えArea"></div>
 
             <div class="flex justify-between items-center bg-red-900 text-white p-1 mb-2 mt-8">
-                <span class="font-bold">■ 送り便 / 北便など</span>
-                <button onclick="addRoute('送り')" class="no-print bg-white text-red-900 px-2 rounded text-[10px] font-bold">+便追加</button>
+                <span class="font-bold">■ 送り便</span>
+                <button onclick="addRoute('送り')" class="no-print bg-white text-red-900 px-2 rounded text-[10px] font-bold">+便ルート追加</button>
             </div>
             <div id="送りArea"></div>
 
             <div class="mt-8 border-t-4 border-black pt-4">
-                <h3 class="bg-black text-white text-center font-bold py-1 mb-2">利用者状況・アレルギー・特記事項</h3>
+                <h3 class="bg-black text-white text-center font-bold py-1 mb-2">重要事項・アレルギー・特記</h3>
                 <table>
-                    <tr class="bg-gray-100"><th>氏名</th><th>学校</th><th>学年</th><th class="w-1/3">アレルギー・重要事項</th><th>備考</th></tr>
+                    <tr class="bg-gray-100"><th>氏名</th><th>学校</th><th>学年</th><th class="w-1/3">重要事項(アレルギー)</th><th>備考</th></tr>
                     <tbody id="attendList"></tbody>
                 </table>
             </div>
@@ -269,20 +265,11 @@
                 <button onclick="addMaster('u')" class="w-full border-2 py-2 mt-2 text-slate-400 font-bold">+ 児童を追加</button>
             </section>
             <div class="grid grid-cols-2 gap-6">
-                <section>
-                    <h3 class="font-bold border-b-2 mb-2">職員・携帯設定</h3>
-                    <table class="text-[9px]"><tbody id="staffTable"></tbody></table>
-                    <button onclick="addMaster('s')" class="w-full border-2 py-1 mt-1 font-bold">+ 職員追加</button>
-                </section>
-                <section>
-                    <h3 class="font-bold border-b-2 border-orange-600 mb-2">車両マスタ</h3>
-                    <table class="text-[9px]"><tbody id="vehicleTable"></tbody></table>
-                    <button onclick="addMaster('v')" class="w-full border-2 py-1 mt-1 font-bold">+ 車両追加</button>
-                </section>
+                <section><h3 class="font-bold border-b-2 mb-2">職員マスタ</h3><table class="text-[9px]"><tbody id="staffTable"></tbody></table><button onclick="addMaster('s')" class="w-full border-2 py-1 mt-1 font-bold">+ 追加</button></section>
+                <section><h3 class="font-bold border-b-2 border-orange-600 mb-2">車両マスタ</h3><table class="text-[9px]"><tbody id="vehicleTable"></tbody></table><button onclick="addMaster('v')" class="w-full border-2 py-1 mt-1 font-bold">+ 追加</button></section>
             </div>
         </div>
     </div>
 </main>
-
 </body>
 </html>
