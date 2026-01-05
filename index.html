@@ -2,22 +2,25 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>運行管理システム v38.0 - 安定修復版</title>
+    <title>運行管理システム v39.0 - 安定版+出欠機能</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { font-family: sans-serif; background: #f1f5f9; font-size: 10px; color: #000; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
         table { border-collapse: collapse; width: 100%; border: 2px solid black; background: white; }
         th, td { border: 1px solid black; padding: 2px; text-align: center; }
         .label-cell { background: #f3f4f6; font-size: 9px; font-weight: bold; width: 50px; }
-        .info-text { font-size: 8px; color: #1d4ed8; font-weight: bold; display: block; }
+        .school-text { color: #1d4ed8; font-size: 9px; margin-left: 2px; font-weight: bold; }
         .time-input { background: #fffbeb !important; border: 1px solid #f59e0b !important; font-size: 13px !important; font-weight: bold; width: 100%; text-align: center; }
-        /* 欠席時の暗転スタイル */
-        .is-absent { background-color: #e5e7eb !important; color: #9ca3af !important; }
-        .is-absent input, .is-absent select { color: #9ca3af !important; background: transparent !important; border: none !important; }
         
+        /* 出欠連動：欠席時の暗転スタイル */
+        .is-absent { background-color: #e5e7eb !important; color: #9ca3af !important; }
+        .is-absent input, .is-absent select { color: #9ca3af !important; background: transparent !important; }
+
         @media print { 
             .no-print { display: none !important; } 
-            .print-area { width: 100% !important; border: none !important; margin: 0 !important; } 
+            .print-area { width: 100% !important; border: none !important; margin: 0 !important; padding: 0 !important; } 
             body { background: white; }
         }
     </style>
@@ -25,14 +28,14 @@
 <body class="min-h-screen">
 
 <script>
-    const STORAGE_KEY = 'SHOJIN_V38_STABLE';
+    const STORAGE_KEY = 'SHOJIN_V39_STABLE_FIX';
     const OFFICE_NAMES = ["星の村", "カラフル", "プリズム"];
-    const toHalf = (str) => str ? str.replace(/[０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0)) : "";
+    const toHalfWidth = (str) => str ? str.replace(/[０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0)) : "";
 
     const createOffice = () => ({ 
         u: [], v: [], s: [], r: {}, 
-        attendance: {}, 
-        phones: [{id:Date.now(), label:"携帯A", num:""}] 
+        attendance: {}, // 出欠管理用
+        phones: [{id:1, label:"A携帯", num:"080-5989-3626"}, {id:2, label:"B携帯", num:"080-5989-3627"}]
     });
 
     let state = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {
@@ -57,9 +60,11 @@
                 const c = line.split(',').map(s => s.replace(/"/g, '').trim());
                 if (c.length < 2) return;
                 cur.u.push({
-                    id: 'U'+Date.now()+Math.random(), name: c[0]||"", days: c[1]||"月火水木金土", 
-                    address: c[2]||"", school: c[3]||"", grade: toHalf(c[4]||""), 
-                    note: c[5]||"", type: c[6]||"車両", inTime: toHalf(c[7]||""), outTime: toHalf(c[9]||""), prefCar: ""
+                    id: 'U'+Date.now()+Math.random(),
+                    name: c[0] || "", days: c[1] || "月火水木金土", address: c[2]||"",
+                    school: c[3] || "", grade: toHalfWidth(c[4] || ""),
+                    note: c[5] || "", type: c[6] || "車両",
+                    inTime: toHalfWidth(c[7] || ""), outTime: toHalfWidth(c[9] || ""), prefCar: ""
                 });
             });
             save();
@@ -77,129 +82,120 @@
     window.autoAssign = () => {
         const date = getDate(); const day = getDay(); const cur = getCur();
         const att = cur.attendance[date] || {};
-        // 出席者のみ抽出
-        const eligible = cur.u.filter(u => u.days.includes(day) && att[u.id] !== '欠');
+        // 欠席者を除外して自動作成
+        const users = cur.u.filter(u => u.days.includes(day) && u.type === "車両" && att[u.id] !== '欠');
+        const vehicles = cur.v.filter(v => v.days.includes(day));
         
         cur.r[date] = { "迎え": [], "送り": [] };
         ["迎え", "送り"].forEach(type => {
-            const routes = cur.v.filter(v => v.days.includes(day)).map(v => ({
-                vName: v.name, driver: "", staff: "", phoneNum: "", 
-                members: Array(6).fill().map(() => ({uId:"", time:""}))
+            const vehicleRoutes = vehicles.map(v => ({
+                vName: v.name, driver: "", staff: "", phoneNum: "", members: []
             }));
-
-            let remaining = eligible.filter(u => u.type === '車両');
-            // 固定車両割り当て
-            remaining = remaining.filter(u => {
-                const idx = routes.findIndex(r => r.vName === u.prefCar);
-                if (idx !== -1) {
-                    const emptyIdx = routes[idx].members.findIndex(m => !m.uId);
-                    if(emptyIdx !== -1) { 
-                        routes[idx].members[emptyIdx] = { uId: u.id, time: type === "迎え" ? u.inTime : u.outTime }; 
-                        return false; 
-                    }
+            let remaining = [...users];
+            vehicleRoutes.forEach(vr => {
+                while(vr.members.length < 6 && remaining.length > 0) {
+                    const u = remaining.shift();
+                    vr.members.push({ uId: u.id, time: type === "迎え" ? u.inTime : u.outTime, note: "" });
                 }
-                return true;
+                vr.members = sortMembers(vr.members);
+                while(vr.members.length < 6) vr.members.push({ uId: "", time: "", note: "" });
             });
-
-            routes.forEach(route => {
-                route.members.forEach((m, i) => {
-                    if(!m.uId && remaining.length > 0) {
-                        const u = remaining.shift();
-                        route.members[i] = { uId: u.id, time: type === "迎え" ? u.inTime : u.outTime };
-                    }
-                });
-                route.members = sortMembers(route.members);
-            });
-            cur.r[date][type] = routes;
+            cur.r[date][type] = vehicleRoutes;
         });
+        save();
+    };
+
+    window.toggleAtt = (uId) => {
+        const date = getDate(); const cur = getCur();
+        if(!cur.attendance[date]) cur.attendance[date] = {};
+        cur.attendance[date][uId] = cur.attendance[date][uId] === '欠' ? '出' : '欠';
         save();
     };
 
     window.render = () => {
         const cur = getCur(); const date = getDate(); const day = getDay();
         const att = cur.attendance[date] || {};
+        const staffs = cur.s || [];
+        const phones = cur.phones || [];
+
         document.getElementById('officeTitle').innerText = OFFICE_NAMES[state.curIdx];
 
         ['迎え', '送り'].forEach(type => {
             const routes = cur.r[date]?.[type] || [];
-            document.getElementById(type + 'Area').innerHTML = routes.map((route, rIdx) => `
+            document.getElementById(type + 'Area').innerHTML = routes.map((route, rIdx) => {
+                const sorted = sortMembers(route.members);
+                return `
                 <div class="mb-2 border-2 border-black">
-                    <table class="w-full">
-                        <tr class="bg-gray-100 font-bold"><td colspan="6" class="text-left px-2">便名：${route.vName}</td></tr>
+                    <table>
+                        <tr class="bg-gray-50 font-bold"><td colspan="6" class="text-left px-2">便名：${route.vName}</td></tr>
                         <tr>
                             <td class="label-cell">運転</td>
-                            <td class="w-24"><select class="w-full" onchange="getCur().r['${date}']['${type}'][${rIdx}].driver=this.value;save()"><option value="">--</option>${cur.s.map(s=>`<option value="${s.name}" ${route.driver===s.name?'selected':''}>${s.name}</option>`).join('')}</select></td>
-                            ${[0, 1].map(mIdx => renderCell(date, type, rIdx, mIdx, route.members[mIdx], cur, day, att)).join('')}
+                            <td class="w-24"><select class="w-full" onchange="getCur().r['${date}']['${type}'][${rIdx}].driver=this.value;save()"><option value="">--</option>${staffs.map(s=>`<option value="${s.name}" ${route.driver===s.name?'selected':''}>${s.name}</option>`).join('')}</select></td>
+                            ${[0, 1].map(i => renderCell(date, type, rIdx, i, sorted[i], cur, day, att)).join('')}
                         </tr>
                         <tr>
                             <td class="label-cell">添乗</td>
-                            <td><select class="w-full" onchange="getCur().r['${date}']['${type}'][${rIdx}].staff=this.value;save()"><option value="">--</option>${cur.s.map(s=>`<option value="${s.name}" ${route.staff===s.name?'selected':''}>${s.name}</option>`).join('')}</select></td>
-                            ${[2, 3].map(mIdx => renderCell(date, type, rIdx, mIdx, route.members[mIdx], cur, day, att)).join('')}
+                            <td><select class="w-full" onchange="getCur().r['${date}']['${type}'][${rIdx}].staff=this.value;save()"><option value="">--</option>${staffs.map(s=>`<option value="${s.name}" ${route.staff===s.name?'selected':''}>${s.name}</option>`).join('')}</select></td>
+                            ${[2, 3].map(i => renderCell(date, type, rIdx, i, sorted[i], cur, day, att)).join('')}
                         </tr>
                         <tr>
                             <td class="label-cell">携帯</td>
                             <td class="p-0.5"><input type="text" class="w-full text-center text-[9px]" value="${route.phoneNum}" onchange="getCur().r['${date}']['${type}'][${rIdx}].phoneNum=this.value;save()"></td>
-                            ${[4, 5].map(mIdx => renderCell(date, type, rIdx, mIdx, route.members[mIdx], cur, day, att)).join('')}
+                            ${[4, 5].map(i => renderCell(date, type, rIdx, i, sorted[i], cur, day, att)).join('')}
                         </tr>
                     </table>
-                </div>`).join('');
+                </div>`;
+            }).join('');
         });
 
         const activeToday = cur.u.filter(u => u.days.includes(day));
-        // 自力・保護者
+        // 自力・保護者（欠席なら非表示）
         document.getElementById('selfList').innerHTML = activeToday.filter(u => u.type !== '車両' && att[u.id] !== '欠').map(u => `
             <tr class="h-6"><td>${u.name}</td><td>${u.type}</td><td>${u.inTime}</td><td>${u.outTime}</td></tr>`).join('');
 
-        // 出欠・重要事項（暗転・理由入力）
+        // 重要事項・出欠連動（ここが肝）
         document.getElementById('attendList').innerHTML = activeToday.map(u => `
             <tr class="h-8 ${att[u.id]==='欠' ? 'is-absent' : ''}">
-                <td class="no-print"><button onclick="toggleAttendance('${u.id}')" class="border px-1 bg-white text-black font-bold">${att[u.id]==='欠'?'欠':'出'}</button></td>
-                <td class="w-24 font-bold text-[10px]">${u.name}</td>
-                <td><input type="text" class="w-full bg-transparent px-1 font-bold ${att[u.id]==='欠'?'text-gray-400':'text-red-600'}" value="${att[u.id]==='欠' ? (cur.attendance[date][u.id+'_r']||'') : (u.note||'')}" placeholder="${att[u.id]==='欠'?'欠席理由入力':''}" onchange="updateNote('${u.id}',this.value)"></td>
+                <td class="no-print"><button onclick="toggleAtt('${u.id}')" class="border px-1 bg-white font-bold text-black">${att[u.id]==='欠'?'欠':'出'}</button></td>
+                <td class="font-bold">${u.name}</td>
+                <td class="text-left px-2"><input type="text" class="w-full bg-transparent font-bold text-red-600" value="${u.note||''}" onchange="getCur().u.find(x=>x.id==='${u.id}').note=this.value;save()"></td>
             </tr>`).join('');
 
-        updateMasters(cur);
+        // スタッフ体制
+        document.getElementById('staffStatusList').innerHTML = staffs.filter(s => s.days.includes(day)).map((s, idx) => `
+            <tr class="h-8"><td>${idx+1}</td><td class="font-bold">${s.name}</td><td><input type="text" class="w-full text-center" value="${s.todayPhone || ''}" onchange="getCur().s.find(x=>x.id==='${s.id}').todayPhone=this.value;save()"></td></tr>`).join('');
+
+        updateMasterTables(cur);
     };
 
     function renderCell(date, type, rIdx, mIdx, m, cur, day, att) {
-        const uId = m ? m.uId : '';
-        const u = cur.u.find(x => x.id === uId);
-        // 出欠が「欠」ではない子のみをリストに表示
+        const u = cur.u.find(x => x.id === m.uId);
         const eligible = cur.u.filter(x => x.days.includes(day) && att[x.id] !== '欠');
         return `
-            <td class="w-14"><input type="text" class="time-input" value="${m?m.time:''}" onchange="getCur().r['${date}']['${type}'][${rIdx}].members[${mIdx}].time=toHalf(this.value); getCur().r['${date}']['${type}'][${rIdx}].members=sortMembers(getCur().r['${date}']['${type}'][${rIdx}].members); save()"></td>
-            <td class="w-44 text-left px-1 border-r">
-                <select class="w-24 text-[9px]" onchange="getCur().r['${date}']['${type}'][${rIdx}].members[${mIdx}].uId=this.value;save()"><option value="">--</option>${eligible.map(x=>`<option value="${x.id}" ${uId===x.id?'selected':''}>${x.name}</option>`).join('')}</select>
-                <span class="info-text">${u ? (u.school + ' ' + u.grade) : ''}</span>
+            <td class="w-14"><input type="text" class="time-input" value="${m.time}" onchange="getCur().r['${date}']['${type}'][${rIdx}].members.find(x=>x.uId==='${m.uId}').time=toHalfWidth(this.value); save()"></td>
+            <td class="w-40 text-left px-1 border-r border-black">
+                <select class="w-20 text-[9px]" onchange="getCur().r['${date}']['${type}'][${rIdx}].members[${mIdx}].uId=this.value;save()">
+                    <option value="">--</option>${eligible.map(x=>`<option value="${x.id}" ${m.uId===x.id?'selected':''}>${x.name}</option>`).join('')}
+                </select>
+                <span class="school-text">${u ? u.school : ''}</span>
             </td>`;
     }
 
-    window.toggleAttendance = (uId) => {
-        const d = getDate(); const cur = getCur(); if(!cur.attendance[d]) cur.attendance[d] = {};
-        cur.attendance[d][uId] = cur.attendance[d][uId] === '欠' ? '出' : '欠'; save();
-    };
-
-    window.updateNote = (uId, val) => {
-        const d = getDate(); const cur = getCur();
-        if(cur.attendance[d]?.[uId] === '欠') cur.attendance[d][uId+'_r'] = val;
-        else { const u = cur.u.find(x=>x.id===uId); if(u) u.note = val; }
-        save();
-    };
-
-    const updateMasters = (cur) => {
-        const draw = (list, type, fields) => list.map(item => `<tr>
-            ${fields.map(f => `<td><input type="text" class="w-full text-[8px]" value="${item[f]||''}" onchange="getCur().${type}.find(x=>x.id==='${item.id}').${f}=this.value;save()"></td>`).join('')}
-            <td><button onclick="getCur().${type}=getCur().${type}.filter(x=>x.id!=='${item.id}');save()" class="text-red-500">×</button></td>
+    const updateMasterTables = (cur) => {
+        const drawM = (type, list) => list.map(i => `<tr>
+            <td><input type="text" class="w-full" value="${i.name}" onchange="getCur().${type}.find(x=>x.id==='${i.id}').name=this.value;save()"></td>
+            <td><div class="flex gap-0.5">${["月","火","水","木","金","土"].map(d => `<span class="cursor-pointer px-1 text-[8px] ${i.days.includes(d)?'bg-blue-600 text-white':'bg-gray-200'}" onclick="const x=getCur().${type}.find(y=>y.id==='${i.id}'); x.days=x.days.includes('${d}')?x.days.replace('${d}',''):x.days+'${d}';save()">${d}</span>`).join('')}</div></td>
+            ${type==='u'?`<td>${i.school}</td><td><select onchange="getCur().u.find(x=>x.id==='${i.id}').type=this.value;save()"><option value="車両" ${i.type==='車両'?'selected':''}>車両</option><option value="自力" ${i.type==='自力'?'selected':''}>自力</option><option value="保護者" ${i.type==='保護者'?'selected':''}>保護者</option></select></td><td><input type="text" class="w-8" value="${i.inTime}" onchange="getCur().u.find(x=>x.id==='${i.id}').inTime=toHalfWidth(this.value);save()"></td>`:'' }
+            <td><button onclick="getCur().${type}=getCur().${type}.filter(x=>x.id!=='${i.id}');save()">×</button></td>
         </tr>`).join('');
-        document.getElementById('m_u').innerHTML = draw(cur.u, 'u', ['name','school','grade','address','note','type','prefCar','inTime','outTime']);
-        document.getElementById('m_s').innerHTML = draw(cur.s, 's', ['name']);
-        document.getElementById('m_v').innerHTML = draw(cur.v, 'v', ['name']);
-        document.getElementById('m_p').innerHTML = draw(cur.phones, 'phones', ['label','num']);
+        document.getElementById('userTable').innerHTML = drawM('u', cur.u);
+        document.getElementById('staffTable').innerHTML = drawM('s', cur.s);
+        document.getElementById('vehicleTable').innerHTML = drawM('v', cur.v);
+        document.getElementById('phoneMasterTable').innerHTML = cur.phones.map(p => `<tr><td><input type="text" class="w-full" value="${p.label}" onchange="getCur().phones.find(x=>x.id===${p.id}).label=this.value;save()"></td><td><input type="text" class="w-full" value="${p.num}" onchange="getCur().phones.find(x=>x.id===${p.id}).num=this.value;save()"></td><td><button onclick="getCur().phones=getCur().phones.filter(x=>x.id!==${p.id});save()">×</button></td></tr>`).join('');
     };
 
     window.addMaster = (type) => {
-        const cur = getCur(); const id = 'ID'+Date.now()+Math.random();
-        if(type==='u') cur.u.push({id, name:'新規', days:'月火水木金土', school:'', grade:'', address:'', note:'', type:'車両', inTime:'', outTime:''});
+        const cur = getCur(); const id = 'ID'+Date.now();
         if(type==='s') cur.s.push({id, name:'新規職員', days:'月火水木金土'});
         if(type==='v') cur.v.push({id, name:'新規車両', days:'月火水木金土'});
         if(type==='p') cur.phones.push({id:Date.now(), label:'携帯', num:''});
@@ -212,25 +208,25 @@
     };
 </script>
 
-<header class="bg-slate-900 text-white p-2 no-print flex justify-between items-center">
-    <div class="flex gap-4 items-center">
-        <h1 class="text-xl font-black italic text-blue-400">運行管理 v38.0</h1>
+<header class="bg-slate-900 text-white p-2 no-print flex justify-between items-center shadow-lg">
+    <div class="flex items-center gap-4">
+        <h1 class="text-xl font-black italic text-blue-400">運行管理 v39.0</h1>
         <div class="flex bg-slate-800 rounded p-1 gap-1">
             <button onclick="state.curIdx=0;save()" id="btn-off-0" class="px-2">星の村</button>
             <button onclick="state.curIdx=1;save()" id="btn-off-1" class="px-2">カラフル</button>
             <button onclick="state.curIdx=2;save()" id="btn-off-2" class="px-2">プリズム</button>
         </div>
         <input type="date" id="dateInput" onchange="render()" class="text-black px-2 py-0.5 rounded font-bold">
-        <label class="bg-emerald-600 px-3 py-1 rounded cursor-pointer text-[10px] font-bold">CSV読込<input type="file" onchange="handleCsv(event)" class="hidden"></label>
+        <label class="bg-emerald-600 px-4 py-1 rounded font-bold cursor-pointer text-xs">CSV読込<input type="file" onchange="handleCsv(event)" class="hidden"></label>
     </div>
     <div class="flex gap-2">
-        <button onclick="autoAssign()" class="bg-orange-600 px-4 py-1 rounded text-xs font-bold">自動作成</button>
-        <button onclick="window.print()" class="bg-blue-600 px-6 py-1 rounded text-xs font-bold">印刷</button>
+        <button onclick="autoAssign()" class="bg-orange-600 px-4 py-1 rounded font-bold text-xs">自動作成</button>
+        <button onclick="window.print()" class="bg-blue-600 px-6 py-1 rounded font-bold text-xs">印刷</button>
     </div>
 </header>
 
 <main class="p-4">
-    <div class="max-w-7xl mx-auto p-4 bg-white border-2 border-black min-h-screen print-area shadow-lg">
+    <div class="max-w-7xl mx-auto p-4 bg-white border-2 border-black min-h-screen print-area shadow-2xl">
         <h2 class="text-center text-2xl font-bold mb-4">【<span id="officeTitle"></span>】 送迎運行計画表</h2>
         <div class="grid grid-cols-12 gap-4">
             <div class="col-span-8">
@@ -241,31 +237,33 @@
             </div>
             <div class="col-span-4 space-y-4">
                 <div class="border-2 border-black p-1">
-                    <h3 class="bg-emerald-800 text-white text-center font-bold py-1 mb-1 text-[9px]">自力・保護者送迎 (本日出席のみ)</h3>
-                    <table><tr class="bg-gray-100 text-[8px]"><th>氏名</th><th>区分</th><th>迎</th><th>送</th></tr><tbody id="selfList"></tbody></table>
+                    <h3 class="bg-black text-white text-center font-bold py-1 mb-1 text-[9px]">スタッフ体制</h3>
+                    <table><tr class="bg-gray-100 text-[9px]"><th>No</th><th>氏名</th><th>連絡先</th></tr><tbody id="staffStatusList"></tbody></table>
                 </div>
                 <div class="border-2 border-black p-1">
-                    <h3 class="bg-gray-800 text-white text-center font-bold py-1 mb-1 text-[9px]">出欠・重要事項 (欠席で暗転連動)</h3>
-                    <table><tr class="bg-gray-100 text-[8px]"><th class="no-print">出欠</th><th>氏名</th><th>備考 / 欠席理由</th></tr><tbody id="attendList"></tbody></table>
+                    <h3 class="bg-emerald-800 text-white text-center font-bold py-1 mb-1 text-[9px]">自力・保護者送迎</h3>
+                    <table><tr class="bg-gray-100 text-[9px]"><th>氏名</th><th>区分</th><th>迎</th><th>送</th></tr><tbody id="selfList"></tbody></table>
+                </div>
+                <div class="border-2 border-black p-1">
+                    <h3 class="bg-gray-800 text-white text-center font-bold py-1 mb-1 text-[9px]">出欠・重要事項</h3>
+                    <table><tr class="bg-gray-100 text-[9px]"><th class="no-print">出欠</th><th>氏名</th><th>特記事項</th></tr><tbody id="attendList"></tbody></table>
                 </div>
             </div>
         </div>
     </div>
 
-    <div class="no-print mt-10 p-6 bg-white border-2 border-slate-300">
-        <h3 class="font-bold border-b-2 border-blue-600 mb-4 text-lg">マスタ管理</h3>
-        <section class="mb-8">
-            <h4 class="font-bold text-blue-800">児童マスタ</h4>
-            <table class="text-[8px]">
-                <tr class="bg-slate-700 text-white font-bold"><th>氏名</th><th>学校</th><th>学年</th><th>住所</th><th>備考</th><th>区分</th><th>優先車</th><th>迎</th><th>送</th><th>消</th></tr>
-                <tbody id="m_u"></tbody>
-            </table>
-            <button onclick="addMaster('u')" class="w-full border-2 border-dashed py-2 mt-1 text-blue-500 font-bold hover:bg-blue-50">+ 児童を追加</button>
-        </section>
-        <div class="grid grid-cols-3 gap-6">
-            <section><h4 class="font-bold border-b border-black">職員マスタ</h4><table id="m_s"></table><button onclick="addMaster('s')" class="w-full border-2 border-dashed mt-1">+ 職員追加</button></section>
-            <section><h4 class="font-bold border-b border-black">車両マスタ</h4><table id="m_v"></table><button onclick="addMaster('v')" class="w-full border-2 border-dashed mt-1">+ 車両追加</button></section>
-            <section><h4 class="font-bold border-b border-black">携帯マスタ</h4><table id="m_p"></table><button onclick="addMaster('p')" class="w-full border-2 border-dashed mt-1">+ 携帯追加</button></section>
+    <div class="no-print mt-10 p-4 bg-white border-2">
+        <h3 class="font-bold border-b mb-2">マスタ管理</h3>
+        <div class="grid grid-cols-2 gap-6">
+            <section>
+                <h4 class="font-bold text-blue-700">児童マスタ</h4>
+                <table class="text-[8px]"><tbody id="userTable"></tbody></table>
+            </section>
+            <section class="space-y-4">
+                <div><h4 class="font-bold">職員マスタ</h4><table id="staffTable"></table><button onclick="addMaster('s')" class="text-xs bg-gray-200 px-2">+ 追加</button></div>
+                <div><h4 class="font-bold">車両マスタ</h4><table id="vehicleTable"></table><button onclick="addMaster('v')" class="text-xs bg-gray-200 px-2">+ 追加</button></div>
+                <div><h4 class="font-bold">携帯マスタ</h4><table id="phoneMasterTable"></table><button onclick="addMaster('p')" class="text-xs bg-gray-200 px-2">+ 追加</button></div>
+            </section>
         </div>
     </div>
 </main>
