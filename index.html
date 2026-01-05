@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>運行管理システム v33.0 - 運行最適化版</title>
+    <title>運行管理システム v34.0</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { font-family: sans-serif; background: #f1f5f9; font-size: 10px; color: #000; }
@@ -13,6 +13,10 @@
         .label-cell { background: #f3f4f6; font-size: 9px; font-weight: bold; width: 50px; }
         .school-text { color: #1d4ed8; font-size: 9px; margin-left: 2px; font-weight: bold; }
         .time-input { background: #fffbeb !important; border: 1px solid #f59e0b !important; font-size: 13px !important; font-weight: bold; width: 100%; text-align: center; }
+        /* 欠席時のスタイル */
+        .is-absent { background-color: #e5e7eb !important; color: #9ca3af !important; }
+        .is-absent td { color: #9ca3af !important; }
+        
         @media print { 
             .no-print { display: none !important; } 
             .print-area { width: 100% !important; border: none !important; margin: 0 !important; padding: 0 !important; } 
@@ -23,14 +27,14 @@
 <body class="min-h-screen">
 
 <script>
-    const STORAGE_KEY = 'SHOJIN_V33_FINAL';
+    const STORAGE_KEY = 'SHOJIN_V34_FINAL';
     const OFFICE_NAMES = ["星の村", "カラフル", "プリズム"];
     
-    // 全角数字を半角に変換するユーティリティ
-    const toHalfWidth = (str) => str.replace(/[０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0));
+    const toHalfWidth = (str) => str ? str.replace(/[０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0)) : "";
 
     const createOffice = () => ({ 
         u: [], v: [], s: [], r: {}, 
+        attendance: {}, // 日付ごとの出欠管理用
         phones: [{id:1, label:"A携帯", num:"080-5989-3626"}, {id:2, label:"B携帯", num:"080-5989-3627"}]
     });
 
@@ -42,6 +46,17 @@
     const save = () => { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); render(); };
     const getCur = () => state.offices[state.curIdx];
     const getDay = () => ["日","月","火","水","木","金","土"][new Date(document.getElementById('dateInput').value).getDay()];
+    const getDate = () => document.getElementById('dateInput').value;
+
+    window.toggleAttendance = (uId) => {
+        const cur = getCur();
+        const date = getDate();
+        if(!cur.attendance) cur.attendance = {};
+        if(!cur.attendance[date]) cur.attendance[date] = {};
+        // デフォルトは出席、クリックで切り替え
+        cur.attendance[date][uId] = cur.attendance[date][uId] === '欠' ? '出' : '欠';
+        save();
+    };
 
     window.handleCsv = (e) => {
         const file = e.target.files[0];
@@ -56,15 +71,10 @@
                 if (c.length < 2) return;
                 cur.u.push({
                     id: 'U'+Date.now()+Math.random(),
-                    name: c[0] || "",
-                    days: c[1] || "月火水木金土",
-                    school: c[3] || "",
-                    grade: toHalfWidth(c[4] || ""),
-                    note: c[5] || "",
-                    type: c[6] || "車両",
-                    inTime: toHalfWidth(c[7] || ""),
-                    outTime: toHalfWidth(c[9] || ""),
-                    prefCar: ""
+                    name: c[0] || "", days: c[1] || "月火水木金土",
+                    school: c[3] || "", grade: toHalfWidth(c[4] || ""),
+                    note: c[5] || "", type: c[6] || "車両",
+                    inTime: toHalfWidth(c[7] || ""), outTime: toHalfWidth(c[9] || ""), prefCar: ""
                 });
             });
             save();
@@ -72,18 +82,6 @@
         reader.readAsText(file, 'Shift-JIS');
     };
 
-    window.addRoute = (type) => {
-        const date = document.getElementById('dateInput').value;
-        const cur = getCur();
-        if(!cur.r[date]) cur.r[date] = { "迎え": [], "送り": [] };
-        cur.r[date][type].push({
-            vName: "新規便", driver: "", staff: "", phoneNum: "",
-            members: Array(6).fill().map(() => ({ uId: "", time: "", note: "" }))
-        });
-        save();
-    };
-
-    // 時間順にメンバーを並び替える関数
     const sortMembers = (members) => {
         return [...members].sort((a, b) => {
             if (!a.time) return 1;
@@ -93,21 +91,19 @@
     };
 
     window.autoAssign = () => {
-        const date = document.getElementById('dateInput').value;
+        const date = getDate();
         const day = getDay();
         const cur = getCur();
-        const users = cur.u.filter(u => u.days.includes(day) && u.type === "車両");
+        // 出席者かつ車両利用者のみ抽出
+        const users = cur.u.filter(u => u.days.includes(day) && u.type === "車両" && (cur.attendance?.[date]?.[u.id] !== '欠'));
         const vehicles = cur.v.filter(v => v.days.includes(day));
         
         cur.r[date] = { "迎え": [], "送り": [] };
         ["迎え", "送り"].forEach(type => {
-            const vehicleRoutes = vehicles.map(v => ({
-                vName: v.name, driver: "", staff: "", phoneNum: "",
-                members: []
-            }));
-
+            const vehicleRoutes = vehicles.map(v => ({ vName: v.name, driver: "", staff: "", phoneNum: "", members: [] }));
             let remaining = [...users];
-            // 固定車両割り当て
+
+            // 固定車両
             remaining = remaining.filter(u => {
                 const idx = vehicleRoutes.findIndex(vr => vr.vName === u.prefCar);
                 if (idx !== -1 && vehicleRoutes[idx].members.length < 6) {
@@ -117,13 +113,12 @@
                 return true;
             });
 
-            // 残りを順次
             vehicleRoutes.forEach(vr => {
                 while(vr.members.length < 6 && remaining.length > 0) {
                     const u = remaining.shift();
                     vr.members.push({ uId: u.id, time: type === "迎え" ? u.inTime : u.outTime, note: "" });
                 }
-                vr.members = sortMembers(vr.members); // 初期配置時にソート
+                vr.members = sortMembers(vr.members);
                 while(vr.members.length < 6) vr.members.push({ uId: "", time: "", note: "" });
             });
             cur.r[date][type] = vehicleRoutes;
@@ -133,20 +128,20 @@
 
     window.render = () => {
         const cur = getCur();
-        const date = document.getElementById('dateInput').value;
+        const date = getDate();
         const day = getDay();
         const staffs = cur.s || [];
         const phones = cur.phones || [];
+        const att = cur.attendance?.[date] || {};
 
         document.getElementById('officeTitle').innerText = OFFICE_NAMES[state.curIdx];
         [0,1,2].forEach(i => document.getElementById(`btn-off-${i}`).className = `px-3 py-1 rounded font-bold ${state.curIdx===i?'bg-blue-600 text-white':'bg-slate-700 text-white'}`);
 
+        // 送迎ルート描画
         ['迎え', '送り'].forEach(type => {
             const routes = cur.r[date]?.[type] || [];
             document.getElementById(type + 'Area').innerHTML = routes.map((route, rIdx) => {
-                // 表示用にソート（空白は下へ）
                 const sortedMembers = sortMembers(route.members);
-                
                 return `
                 <div class="mb-2 border-2 border-black">
                     <table class="w-full">
@@ -155,12 +150,14 @@
                         </tr>
                         <tr>
                             <td class="label-cell">運転</td>
-                            <td class="w-32"><select class="w-full" onchange="getCur().r['${date}']['${type}'][${rIdx}].driver=this.value;save()"><option value="">--</option>${staffs.map(s=>`<option value="${s.name}" ${route.driver===s.name?'selected':''}>${s.name}</option>`).join('')}</select></td>
+                            <td class="w-24"><select class="w-full" onchange="getCur().r['${date}']['${type}'][${rIdx}].driver=this.value;save()"><option value="">--</option>${staffs.map(s=>`<option value="${s.name}" ${route.driver===s.name?'selected':''}>${s.name}</option>`).join('')}</select></td>
                             ${[0, 1].map(i => {
                                 const m = sortedMembers[i];
+                                // 出席者のみリストに出す
+                                const eligibleUsers = cur.u.filter(u=>u.days.includes(day) && att[u.id] !== '欠');
                                 return `
-                                <td class="w-14"><input type="text" class="time-input" value="${m.time}" onchange="const r=getCur().r['${date}']['${type}'][${rIdx}]; r.members.find(x=>x.uId==='${m.uId}').time=toHalfWidth(this.value); r.members=sortMembers(r.members); save()"></td>
-                                <td class="w-40 text-left px-1 border-r border-black"><select class="w-20 text-[9px]" onchange="getCur().r['${date}']['${type}'][${rIdx}].members[${i}].uId=this.value;save()"><option value="">--</option>${cur.u.filter(u=>u.days.includes(day)).map(x=>`<option value="${x.id}" ${m.uId===x.id?'selected':''}>${x.name}</option>`).join('')}</select><span class="school-text">${cur.u.find(u=>u.id===m.uId)?.school || ''}</span></td>
+                                <td class="w-14"><input type="text" class="time-input" value="${m.time}" onchange="const r=getCur().r['${date}']['${type}'][${rIdx}]; const mem=r.members.find(x=>x.uId==='${m.uId}'); if(mem)mem.time=toHalfWidth(this.value); r.members=sortMembers(r.members); save()"></td>
+                                <td class="w-44 text-left px-1 border-r border-black"><select class="w-24 text-[9px]" onchange="getCur().r['${date}']['${type}'][${rIdx}].members[${i}].uId=this.value;save()"><option value="">--</option>${eligibleUsers.map(x=>`<option value="${x.id}" ${m.uId===x.id?'selected':''}>${x.name}</option>`).join('')}</select><span class="school-text">${cur.u.find(u=>u.id===m.uId)?.school || ''}</span></td>
                                 `;
                             }).join('')}
                         </tr>
@@ -169,9 +166,10 @@
                             <td><select class="w-full" onchange="getCur().r['${date}']['${type}'][${rIdx}].staff=this.value;save()"><option value="">--</option>${staffs.map(s=>`<option value="${s.name}" ${route.staff===s.name?'selected':''}>${s.name}</option>`).join('')}</select></td>
                             ${[2, 3].map(i => {
                                 const m = sortedMembers[i];
+                                const eligibleUsers = cur.u.filter(u=>u.days.includes(day) && att[u.id] !== '欠');
                                 return `
-                                <td class="w-14"><input type="text" class="time-input" value="${m.time}" onchange="const r=getCur().r['${date}']['${type}'][${rIdx}]; r.members.find(x=>x.uId==='${m.uId}').time=toHalfWidth(this.value); r.members=sortMembers(r.members); save()"></td>
-                                <td class="w-40 text-left px-1 border-r border-black"><select class="w-20 text-[9px]" onchange="getCur().r['${date}']['${type}'][${rIdx}].members[${i}].uId=this.value;save()"><option value="">--</option>${cur.u.filter(u=>u.days.includes(day)).map(x=>`<option value="${x.id}" ${m.uId===x.id?'selected':''}>${x.name}</option>`).join('')}</select><span class="school-text">${cur.u.find(u=>u.id===m.uId)?.school || ''}</span></td>
+                                <td class="w-14"><input type="text" class="time-input" value="${m.time}" onchange="const r=getCur().r['${date}']['${type}'][${rIdx}]; const mem=r.members.find(x=>x.uId==='${m.uId}'); if(mem)mem.time=toHalfWidth(this.value); r.members=sortMembers(r.members); save()"></td>
+                                <td class="w-44 text-left px-1 border-r border-black"><select class="w-24 text-[9px]" onchange="getCur().r['${date}']['${type}'][${rIdx}].members[${i}].uId=this.value;save()"><option value="">--</option>${eligibleUsers.map(x=>`<option value="${x.id}" ${m.uId===x.id?'selected':''}>${x.name}</option>`).join('')}</select><span class="school-text">${cur.u.find(u=>u.id===m.uId)?.school || ''}</span></td>
                                 `;
                             }).join('')}
                         </tr>
@@ -183,9 +181,10 @@
                             </td>
                             ${[4, 5].map(i => {
                                 const m = sortedMembers[i];
+                                const eligibleUsers = cur.u.filter(u=>u.days.includes(day) && att[u.id] !== '欠');
                                 return `
-                                <td class="w-14"><input type="text" class="time-input" value="${m.time}" onchange="const r=getCur().r['${date}']['${type}'][${rIdx}]; r.members.find(x=>x.uId==='${m.uId}').time=toHalfWidth(this.value); r.members=sortMembers(r.members); save()"></td>
-                                <td class="w-40 text-left px-1 border-r border-black"><select class="w-20 text-[9px]" onchange="getCur().r['${date}']['${type}'][${rIdx}].members[${i}].uId=this.value;save()"><option value="">--</option>${cur.u.filter(u=>u.days.includes(day)).map(x=>`<option value="${x.id}" ${m.uId===x.id?'selected':''}>${x.name}</option>`).join('')}</select><span class="school-text">${cur.u.find(u=>u.id===m.uId)?.school || ''}</span></td>
+                                <td class="w-14"><input type="text" class="time-input" value="${m.time}" onchange="const r=getCur().r['${date}']['${type}'][${rIdx}]; const mem=r.members.find(x=>x.uId==='${m.uId}'); if(mem)mem.time=toHalfWidth(this.value); r.members=sortMembers(r.members); save()"></td>
+                                <td class="w-44 text-left px-1 border-r border-black"><select class="w-24 text-[9px]" onchange="getCur().r['${date}']['${type}'][${rIdx}].members[${i}].uId=this.value;save()"><option value="">--</option>${eligibleUsers.map(x=>`<option value="${x.id}" ${m.uId===x.id?'selected':''}>${x.name}</option>`).join('')}</select><span class="school-text">${cur.u.find(u=>u.id===m.uId)?.school || ''}</span></td>
                                 `;
                             }).join('')}
                         </tr>
@@ -194,29 +193,34 @@
             }).join('');
         });
 
+        // 利用者状況・自力・スタッフ体制（出欠連動）
         const activeToday = cur.u.filter(u => u.days.includes(day));
-        // 自力・保護者送迎欄
-        document.getElementById('selfList').innerHTML = activeToday.filter(u => u.type !== '車両').map(u => `
+        
+        // 1. 自力・保護者（出席者のみ）
+        document.getElementById('selfList').innerHTML = activeToday.filter(u => u.type !== '車両' && att[u.id] !== '欠').map(u => `
             <tr class="h-6"><td>${u.name}</td><td>${u.type}</td><td>${u.inTime}</td><td>${u.outTime}</td></tr>
         `).join('');
 
-        // 重要事項（全員）
+        // 2. 重要事項（全員表示、欠席は暗く）
         document.getElementById('attendList').innerHTML = activeToday.map(u => `
-            <tr class="h-6"><td>${u.name}</td><td class="text-left px-2 text-red-600 font-bold">${u.note||''}</td></tr>
+            <tr class="h-7 ${att[u.id]==='欠' ? 'is-absent' : ''}">
+                <td class="w-8 no-print"><button onclick="toggleAttendance('${u.id}')" class="px-1 border bg-white text-black text-[8px]">${att[u.id]==='欠'?'欠':'出'}</button></td>
+                <td class="w-20 font-bold">${u.name}</td>
+                <td class="text-left px-2 text-red-600 font-bold">${att[u.id]==='欠' ? '(欠席)' : (u.note||'')}</td>
+            </tr>
         `).join('');
 
-        // スタッフ体制
+        // 3. スタッフ体制
         document.getElementById('staffStatusList').innerHTML = staffs.filter(s => s.days.includes(day)).map((s, idx) => `
             <tr class="h-8">
                 <td>${idx+1}</td><td class="font-bold">${s.name}</td>
                 <td>
-                    <select class="no-print text-[8px]" onchange="getCur().s.find(x=>x.id==='${s.id}').todayPhone=this.value;save()"><option value="">携帯選択▼</option>${phones.map(p=>`<option value="${p.num}">${p.label}</option>`).join('')}</select>
+                    <select class="no-print text-[8px]" onchange="getCur().s.find(x=>x.id==='${s.id}').todayPhone=this.value;save()"><option value="">携帯選択</option>${phones.map(p=>`<option value="${p.num}">${p.label}</option>`).join('')}</select>
                     <input type="text" class="w-full text-center" value="${s.todayPhone || ''}" onchange="getCur().s.find(x=>x.id==='${s.id}').todayPhone=this.value;save()">
                 </td>
             </tr>
         `).join('');
 
-        // マスタ等略（内部的には維持）
         updateMasterTables(cur);
     };
 
@@ -224,7 +228,7 @@
         const drawM = (type, list) => list.map(i => `<tr>
             <td><input type="text" class="w-full" value="${i.name}" onchange="getCur().${type}.find(x=>x.id==='${i.id}').name=this.value;save()"></td>
             <td><div class="flex gap-0.5">${["月","火","水","木","金","土"].map(d => `<span class="cursor-pointer px-1 text-[8px] ${i.days.includes(d)?'bg-blue-600 text-white':'bg-gray-200'}" onclick="const x=getCur().${type}.find(y=>y.id==='${i.id}'); x.days=x.days.includes('${d}')?x.days.replace('${d}',''):x.days+'${d}';save()">${d}</span>`).join('')}</div></td>
-            ${type==='u'?`<td>${i.school}</td><td><select onchange="getCur().u.find(x=>x.id==='${i.id}').type=this.value;save()"><option value="車両" ${i.type==='車両'?'selected':''}>車両</option><option value="自力" ${i.type==='自力'?'selected':''}>自力</option><option value="保護者" ${i.type==='保護者'?'selected':''}>保護者</option></select></td><td><input type="text" class="w-8" value="${i.inTime}" onchange="getCur().u.find(x=>x.id==='${i.id}').inTime=toHalfWidth(this.value);save()"></td><td><input type="text" class="w-full" value="${i.note}" onchange="getCur().u.find(x=>x.id==='${i.id}').note=this.value;save()"></td>`:'' }
+            ${type==='u'?`<td>${i.school}</td><td><select onchange="getCur().u.find(x=>x.id==='${i.id}').type=this.value;save()"><option value="車両" ${i.type==='車両'?'selected':''}>車両</option><option value="自力" ${i.type==='自力'?'selected':''}>自力</option><option value="保護者" ${i.type==='保護者'?'selected':''}>保護者</option></select></td><td><input type="text" class="w-8 text-center" value="${i.inTime}" onchange="getCur().u.find(x=>x.id==='${i.id}').inTime=toHalfWidth(this.value);save()"></td><td><input type="text" class="w-full" value="${i.note}" onchange="getCur().u.find(x=>x.id==='${i.id}').note=this.value;save()"></td>`:'' }
             <td><button onclick="getCur().${type}=getCur().${type}.filter(x=>x.id!=='${i.id}');save()">×</button></td>
         </tr>`).join('');
         document.getElementById('userTable').innerHTML = drawM('u', cur.u);
@@ -240,9 +244,9 @@
     };
 </script>
 
-<header class="bg-slate-900 text-white p-2 no-print flex justify-between items-center">
+<header class="bg-slate-900 text-white p-2 no-print flex justify-between items-center shadow-lg">
     <div class="flex items-center gap-4">
-        <h1 class="text-xl font-black italic text-blue-400">運行管理 v33.0</h1>
+        <h1 class="text-xl font-black italic text-blue-400">運行管理 v34.0</h1>
         <div class="flex bg-slate-800 rounded p-1 gap-1">
             <button onclick="state.curIdx=0;save()" id="btn-off-0">星の村</button>
             <button onclick="state.curIdx=1;save()" id="btn-off-1">カラフル</button>
@@ -258,38 +262,44 @@
 </header>
 
 <main class="p-4">
-    <div id="scheduleTab" class="tab-content active">
-        <div class="max-w-7xl mx-auto p-4 bg-white border-2 border-black min-h-screen print-area">
-            <h2 class="text-center text-2xl font-bold mb-4">【<span id="officeTitle"></span>】 送迎運行計画表</h2>
-            <div class="grid grid-cols-12 gap-4">
-                <div class="col-span-8">
-                    <div class="bg-blue-900 text-white p-1 mb-1 font-bold">■ 迎え便</div>
-                    <div id="迎えArea"></div>
-                    <div class="bg-red-900 text-white p-1 mb-1 mt-6 font-bold">■ 送り便</div>
-                    <div id="送りArea"></div>
+    <div class="max-w-7xl mx-auto p-4 bg-white border-2 border-black min-h-screen print-area">
+        <h2 class="text-center text-2xl font-bold mb-4">【<span id="officeTitle"></span>】 送迎運行計画表</h2>
+        <div class="grid grid-cols-12 gap-4">
+            <div class="col-span-8">
+                <div class="bg-blue-900 text-white p-1 mb-1 font-bold">■ 迎え便</div>
+                <div id="迎えArea"></div>
+                <div class="bg-red-900 text-white p-1 mb-1 mt-6 font-bold">■ 送り便</div>
+                <div id="送りArea"></div>
+            </div>
+            <div class="col-span-4 space-y-4">
+                <div class="border-2 border-black p-1">
+                    <h3 class="bg-black text-white text-center font-bold py-1 mb-1 text-[9px]">スタッフ体制</h3>
+                    <table><tr class="bg-gray-100 text-[9px]"><th>No</th><th>氏名</th><th>連絡先(マスタ選択)</th></tr><tbody id="staffStatusList"></tbody></table>
                 </div>
-                <div class="col-span-4 space-y-4">
-                    <div class="border-2 border-black p-1">
-                        <h3 class="bg-black text-white text-center font-bold py-1 mb-1 text-[9px]">スタッフ体制</h3>
-                        <table><tr class="bg-gray-100 text-[9px]"><th>No</th><th>氏名</th><th>連絡先(マスタ選択可)</th></tr><tbody id="staffStatusList"></tbody></table>
-                    </div>
-                    <div class="border-2 border-black p-1">
-                        <h3 class="bg-emerald-800 text-white text-center font-bold py-1 mb-1 text-[9px]">自力・保護者送迎</h3>
-                        <table><tr class="bg-gray-100 text-[9px]"><th>氏名</th><th>区分</th><th>迎</th><th>送</th></tr><tbody id="selfList"></tbody></table>
-                    </div>
-                    <div class="border-2 border-black p-1">
-                        <h3 class="bg-gray-800 text-white text-center font-bold py-1 mb-1 text-[9px]">重要事項</h3>
-                        <table><tr class="bg-gray-100 text-[9px]"><th>氏名</th><th>特記事項</th></tr><tbody id="attendList"></tbody></table>
-                    </div>
+                <div class="border-2 border-black p-1">
+                    <h3 class="bg-emerald-800 text-white text-center font-bold py-1 mb-1 text-[9px]">自力・保護者送迎 (出席者のみ)</h3>
+                    <table><tr class="bg-gray-100 text-[9px]"><th>氏名</th><th>区分</th><th>迎</th><th>送</th></tr><tbody id="selfList"></tbody></table>
+                </div>
+                <div class="border-2 border-black p-1">
+                    <h3 class="bg-gray-800 text-white text-center font-bold py-1 mb-1 text-[9px]">利用者状況・重要事項 (出欠確認)</h3>
+                    <table>
+                        <tr class="bg-gray-100 text-[9px]"><th class="no-print">出欠</th><th>氏名</th><th>重要事項 / 欠席理由</th></tr>
+                        <tbody id="attendList"></tbody>
+                    </table>
                 </div>
             </div>
         </div>
     </div>
-    <div class="no-print mt-10 p-4 bg-white border-2">
-        <h3 class="font-bold border-b mb-2">マスタ管理</h3>
-        <div class="grid grid-cols-2 gap-4">
-            <section><h4>児童マスタ</h4><table class="text-[8px]"><tbody id="userTable"></tbody></table></section>
-            <section><h4>スタッフ</h4><table id="staffTable"></table><h4>車両</h4><table id="vehicleTable"></table><h4>携帯</h4><table id="phoneMasterTable"></table></section>
+
+    <div class="no-print mt-10 p-4 bg-white border-2 shadow-inner">
+        <h3 class="font-bold border-b-2 border-slate-400 mb-2">マスタ管理</h3>
+        <div class="grid grid-cols-2 gap-8">
+            <section><h4 class="font-bold text-blue-800">児童マスタ</h4><table class="text-[8px]"><tbody id="userTable"></tbody></table></section>
+            <section>
+                <h4 class="font-bold text-slate-800">スタッフ</h4><table id="staffTable" class="text-[8px]"></table>
+                <h4 class="font-bold text-orange-600 mt-4">車両</h4><table id="vehicleTable" class="text-[8px]"></table>
+                <h4 class="font-bold text-emerald-600 mt-4">携帯電話</h4><table id="phoneMasterTable" class="text-[8px]"></table>
+            </section>
         </div>
     </div>
 </main>
