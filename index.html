@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>運行管理システム v37.0</title>
+    <title>運行管理システム v38.0 - 安定修復版</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { font-family: sans-serif; background: #f1f5f9; font-size: 10px; color: #000; }
@@ -11,8 +11,10 @@
         .label-cell { background: #f3f4f6; font-size: 9px; font-weight: bold; width: 50px; }
         .info-text { font-size: 8px; color: #1d4ed8; font-weight: bold; display: block; }
         .time-input { background: #fffbeb !important; border: 1px solid #f59e0b !important; font-size: 13px !important; font-weight: bold; width: 100%; text-align: center; }
+        /* 欠席時の暗転スタイル */
         .is-absent { background-color: #e5e7eb !important; color: #9ca3af !important; }
-        .is-absent input { color: #9ca3af !important; background: transparent !important; border: none !important; }
+        .is-absent input, .is-absent select { color: #9ca3af !important; background: transparent !important; border: none !important; }
+        
         @media print { 
             .no-print { display: none !important; } 
             .print-area { width: 100% !important; border: none !important; margin: 0 !important; } 
@@ -23,11 +25,15 @@
 <body class="min-h-screen">
 
 <script>
-    const STORAGE_KEY = 'SHOJIN_V37_MASTER';
+    const STORAGE_KEY = 'SHOJIN_V38_STABLE';
     const OFFICE_NAMES = ["星の村", "カラフル", "プリズム"];
     const toHalf = (str) => str ? str.replace(/[０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0)) : "";
 
-    const createOffice = () => ({ u: [], v: [], s: [], r: {}, attendance: {}, phones: [{id:1, label:"A携帯", num:""}] });
+    const createOffice = () => ({ 
+        u: [], v: [], s: [], r: {}, 
+        attendance: {}, 
+        phones: [{id:Date.now(), label:"携帯A", num:""}] 
+    });
 
     let state = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {
         curIdx: 0,
@@ -39,7 +45,6 @@
     const getDate = () => document.getElementById('dateInput').value;
     const getDay = () => ["日","月","火","水","木","金","土"][new Date(getDate()).getDay()];
 
-    // CSV読込（全項目反映）
     window.handleCsv = (e) => {
         const file = e.target.files[0];
         if(!file) return;
@@ -52,9 +57,9 @@
                 const c = line.split(',').map(s => s.replace(/"/g, '').trim());
                 if (c.length < 2) return;
                 cur.u.push({
-                    id: 'U'+Date.now()+Math.random(), name: c[0]||"", days: c[1]||"月火水木金土", address: c[2]||"",
-                    school: c[3]||"", grade: toHalf(c[4]||""), note: c[5]||"", type: c[6]||"車両",
-                    inTime: toHalf(c[7]||""), outTime: toHalf(c[9]||""), prefCar: ""
+                    id: 'U'+Date.now()+Math.random(), name: c[0]||"", days: c[1]||"月火水木金土", 
+                    address: c[2]||"", school: c[3]||"", grade: toHalf(c[4]||""), 
+                    note: c[5]||"", type: c[6]||"車両", inTime: toHalf(c[7]||""), outTime: toHalf(c[9]||""), prefCar: ""
                 });
             });
             save();
@@ -72,12 +77,14 @@
     window.autoAssign = () => {
         const date = getDate(); const day = getDay(); const cur = getCur();
         const att = cur.attendance[date] || {};
+        // 出席者のみ抽出
         const eligible = cur.u.filter(u => u.days.includes(day) && att[u.id] !== '欠');
         
         cur.r[date] = { "迎え": [], "送り": [] };
         ["迎え", "送り"].forEach(type => {
             const routes = cur.v.filter(v => v.days.includes(day)).map(v => ({
-                vName: v.name, driver: "", staff: "", phoneNum: "", members: Array(6).fill().map(() => ({uId:"", time:""}))
+                vName: v.name, driver: "", staff: "", phoneNum: "", 
+                members: Array(6).fill().map(() => ({uId:"", time:""}))
             }));
 
             let remaining = eligible.filter(u => u.type === '車両');
@@ -86,7 +93,10 @@
                 const idx = routes.findIndex(r => r.vName === u.prefCar);
                 if (idx !== -1) {
                     const emptyIdx = routes[idx].members.findIndex(m => !m.uId);
-                    if(emptyIdx !== -1) { routes[idx].members[emptyIdx] = { uId: u.id, time: type === "迎え" ? u.inTime : u.outTime }; return false; }
+                    if(emptyIdx !== -1) { 
+                        routes[idx].members[emptyIdx] = { uId: u.id, time: type === "迎え" ? u.inTime : u.outTime }; 
+                        return false; 
+                    }
                 }
                 return true;
             });
@@ -115,7 +125,7 @@
             document.getElementById(type + 'Area').innerHTML = routes.map((route, rIdx) => `
                 <div class="mb-2 border-2 border-black">
                     <table class="w-full">
-                        <tr class="bg-gray-100 font-bold"><td colspan="6" class="text-left px-2 text-[10px]">便名：${route.vName}</td></tr>
+                        <tr class="bg-gray-100 font-bold"><td colspan="6" class="text-left px-2">便名：${route.vName}</td></tr>
                         <tr>
                             <td class="label-cell">運転</td>
                             <td class="w-24"><select class="w-full" onchange="getCur().r['${date}']['${type}'][${rIdx}].driver=this.value;save()"><option value="">--</option>${cur.s.map(s=>`<option value="${s.name}" ${route.driver===s.name?'selected':''}>${s.name}</option>`).join('')}</select></td>
@@ -140,24 +150,26 @@
         document.getElementById('selfList').innerHTML = activeToday.filter(u => u.type !== '車両' && att[u.id] !== '欠').map(u => `
             <tr class="h-6"><td>${u.name}</td><td>${u.type}</td><td>${u.inTime}</td><td>${u.outTime}</td></tr>`).join('');
 
-        // 出欠・重要事項（暗転維持）
+        // 出欠・重要事項（暗転・理由入力）
         document.getElementById('attendList').innerHTML = activeToday.map(u => `
             <tr class="h-8 ${att[u.id]==='欠' ? 'is-absent' : ''}">
                 <td class="no-print"><button onclick="toggleAttendance('${u.id}')" class="border px-1 bg-white text-black font-bold">${att[u.id]==='欠'?'欠':'出'}</button></td>
-                <td class="w-24 font-bold">${u.name}</td>
-                <td><input type="text" class="w-full bg-transparent px-1 font-bold ${att[u.id]==='欠'?'text-gray-400':'text-red-600'}" value="${att[u.id]==='欠' ? (cur.attendance[date][u.id+'_r']||'理由入力') : (u.note||'')}" onchange="updateNote('${u.id}',this.value)"></td>
+                <td class="w-24 font-bold text-[10px]">${u.name}</td>
+                <td><input type="text" class="w-full bg-transparent px-1 font-bold ${att[u.id]==='欠'?'text-gray-400':'text-red-600'}" value="${att[u.id]==='欠' ? (cur.attendance[date][u.id+'_r']||'') : (u.note||'')}" placeholder="${att[u.id]==='欠'?'欠席理由入力':''}" onchange="updateNote('${u.id}',this.value)"></td>
             </tr>`).join('');
 
         updateMasters(cur);
     };
 
     function renderCell(date, type, rIdx, mIdx, m, cur, day, att) {
-        const u = cur.u.find(x => x.id === (m?m.uId:''));
+        const uId = m ? m.uId : '';
+        const u = cur.u.find(x => x.id === uId);
+        // 出欠が「欠」ではない子のみをリストに表示
         const eligible = cur.u.filter(x => x.days.includes(day) && att[x.id] !== '欠');
         return `
             <td class="w-14"><input type="text" class="time-input" value="${m?m.time:''}" onchange="getCur().r['${date}']['${type}'][${rIdx}].members[${mIdx}].time=toHalf(this.value); getCur().r['${date}']['${type}'][${rIdx}].members=sortMembers(getCur().r['${date}']['${type}'][${rIdx}].members); save()"></td>
             <td class="w-44 text-left px-1 border-r">
-                <select class="w-24 text-[9px]" onchange="getCur().r['${date}']['${type}'][${rIdx}].members[${mIdx}].uId=this.value;save()"><option value="">--</option>${eligible.map(x=>`<option value="${x.id}" ${m && m.uId===x.id?'selected':''}>${x.name}</option>`).join('')}</select>
+                <select class="w-24 text-[9px]" onchange="getCur().r['${date}']['${type}'][${rIdx}].members[${mIdx}].uId=this.value;save()"><option value="">--</option>${eligible.map(x=>`<option value="${x.id}" ${uId===x.id?'selected':''}>${x.name}</option>`).join('')}</select>
                 <span class="info-text">${u ? (u.school + ' ' + u.grade) : ''}</span>
             </td>`;
     }
@@ -177,18 +189,20 @@
     const updateMasters = (cur) => {
         const draw = (list, type, fields) => list.map(item => `<tr>
             ${fields.map(f => `<td><input type="text" class="w-full text-[8px]" value="${item[f]||''}" onchange="getCur().${type}.find(x=>x.id==='${item.id}').${f}=this.value;save()"></td>`).join('')}
-            <td><button onclick="getCur().${type}=getCur().${type}.filter(x=>x.id!=='${item.id}');save()">×</button></td>
+            <td><button onclick="getCur().${type}=getCur().${type}.filter(x=>x.id!=='${item.id}');save()" class="text-red-500">×</button></td>
         </tr>`).join('');
         document.getElementById('m_u').innerHTML = draw(cur.u, 'u', ['name','school','grade','address','note','type','prefCar','inTime','outTime']);
         document.getElementById('m_s').innerHTML = draw(cur.s, 's', ['name']);
         document.getElementById('m_v').innerHTML = draw(cur.v, 'v', ['name']);
+        document.getElementById('m_p').innerHTML = draw(cur.phones, 'phones', ['label','num']);
     };
 
     window.addMaster = (type) => {
-        const cur = getCur(); const id = 'ID'+Date.now();
+        const cur = getCur(); const id = 'ID'+Date.now()+Math.random();
         if(type==='u') cur.u.push({id, name:'新規', days:'月火水木金土', school:'', grade:'', address:'', note:'', type:'車両', inTime:'', outTime:''});
-        if(type==='s') cur.s.push({id, name:'新規', days:'月火水木金土'});
-        if(type==='v') cur.v.push({id, name:'新規', days:'月火水木金土'});
+        if(type==='s') cur.s.push({id, name:'新規職員', days:'月火水木金土'});
+        if(type==='v') cur.v.push({id, name:'新規車両', days:'月火水木金土'});
+        if(type==='p') cur.phones.push({id:Date.now(), label:'携帯', num:''});
         save();
     };
 
@@ -198,9 +212,9 @@
     };
 </script>
 
-<header class="bg-slate-900 text-white p-2 no-print flex justify-between items-center shadow-md">
+<header class="bg-slate-900 text-white p-2 no-print flex justify-between items-center">
     <div class="flex gap-4 items-center">
-        <h1 class="text-xl font-black italic text-blue-400">運行管理 v37.0</h1>
+        <h1 class="text-xl font-black italic text-blue-400">運行管理 v38.0</h1>
         <div class="flex bg-slate-800 rounded p-1 gap-1">
             <button onclick="state.curIdx=0;save()" id="btn-off-0" class="px-2">星の村</button>
             <button onclick="state.curIdx=1;save()" id="btn-off-1" class="px-2">カラフル</button>
@@ -216,8 +230,8 @@
 </header>
 
 <main class="p-4">
-    <div class="max-w-7xl mx-auto p-4 bg-white border-2 border-black min-h-screen print-area shadow-2xl">
-        <h2 class="text-center text-2xl font-bold mb-4 italic">【<span id="officeTitle"></span>】 送迎運行計画表</h2>
+    <div class="max-w-7xl mx-auto p-4 bg-white border-2 border-black min-h-screen print-area shadow-lg">
+        <h2 class="text-center text-2xl font-bold mb-4">【<span id="officeTitle"></span>】 送迎運行計画表</h2>
         <div class="grid grid-cols-12 gap-4">
             <div class="col-span-8">
                 <div class="bg-blue-900 text-white p-1 mb-1 font-bold">■ 迎え便</div>
@@ -227,12 +241,12 @@
             </div>
             <div class="col-span-4 space-y-4">
                 <div class="border-2 border-black p-1">
-                    <h3 class="bg-emerald-800 text-white text-center font-bold py-1 mb-1 text-[9px]">自力・保護者送迎</h3>
+                    <h3 class="bg-emerald-800 text-white text-center font-bold py-1 mb-1 text-[9px]">自力・保護者送迎 (本日出席のみ)</h3>
                     <table><tr class="bg-gray-100 text-[8px]"><th>氏名</th><th>区分</th><th>迎</th><th>送</th></tr><tbody id="selfList"></tbody></table>
                 </div>
                 <div class="border-2 border-black p-1">
-                    <h3 class="bg-gray-800 text-white text-center font-bold py-1 mb-1 text-[9px]">出欠・重要事項</h3>
-                    <table><tr class="bg-gray-100 text-[8px]"><th class="no-print">出欠</th><th>氏名</th><th>備考/欠席理由</th></tr><tbody id="attendList"></tbody></table>
+                    <h3 class="bg-gray-800 text-white text-center font-bold py-1 mb-1 text-[9px]">出欠・重要事項 (欠席で暗転連動)</h3>
+                    <table><tr class="bg-gray-100 text-[8px]"><th class="no-print">出欠</th><th>氏名</th><th>備考 / 欠席理由</th></tr><tbody id="attendList"></tbody></table>
                 </div>
             </div>
         </div>
@@ -243,14 +257,15 @@
         <section class="mb-8">
             <h4 class="font-bold text-blue-800">児童マスタ</h4>
             <table class="text-[8px]">
-                <tr class="bg-slate-700 text-white"><th>氏名</th><th>学校</th><th>学年</th><th>住所</th><th>備考</th><th>区分</th><th>優先車</th><th>迎</th><th>送</th><th>消</th></tr>
+                <tr class="bg-slate-700 text-white font-bold"><th>氏名</th><th>学校</th><th>学年</th><th>住所</th><th>備考</th><th>区分</th><th>優先車</th><th>迎</th><th>送</th><th>消</th></tr>
                 <tbody id="m_u"></tbody>
             </table>
-            <button onclick="addMaster('u')" class="w-full border-2 border-dashed py-2 mt-1 text-blue-500 font-bold">+ 児童追加</button>
+            <button onclick="addMaster('u')" class="w-full border-2 border-dashed py-2 mt-1 text-blue-500 font-bold hover:bg-blue-50">+ 児童を追加</button>
         </section>
-        <div class="grid grid-cols-2 gap-6">
-            <section><h4 class="font-bold">職員</h4><table id="m_s"></table><button onclick="addMaster('s')" class="w-full border-2 border-dashed mt-1">+ 追加</button></section>
-            <section><h4 class="font-bold">車両</h4><table id="m_v"></table><button onclick="addMaster('v')" class="w-full border-2 border-dashed mt-1">+ 追加</button></section>
+        <div class="grid grid-cols-3 gap-6">
+            <section><h4 class="font-bold border-b border-black">職員マスタ</h4><table id="m_s"></table><button onclick="addMaster('s')" class="w-full border-2 border-dashed mt-1">+ 職員追加</button></section>
+            <section><h4 class="font-bold border-b border-black">車両マスタ</h4><table id="m_v"></table><button onclick="addMaster('v')" class="w-full border-2 border-dashed mt-1">+ 車両追加</button></section>
+            <section><h4 class="font-bold border-b border-black">携帯マスタ</h4><table id="m_p"></table><button onclick="addMaster('p')" class="w-full border-2 border-dashed mt-1">+ 携帯追加</button></section>
         </div>
     </div>
 </main>
