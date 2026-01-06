@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>運行管理システム v49.1 - 機能維持・修正版</title>
+    <title>運行管理システム v49.2</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { font-family: sans-serif; background: #f1f5f9; font-size: 11px; color: #000; }
@@ -27,7 +27,7 @@
 
 <script>
     const STORAGE_KEY = 'SHOJIN_V49_MASTER';
-    const OFFICE_NAMES = ["星の村", "カラフル", "プリズム"];
+    const OFFICE_NAMES = ["星 of 村", "カラフル", "プリズム"];
     
     const toHalf = (s) => s ? String(s).replace(/[０-９]/g, a => String.fromCharCode(a.charCodeAt(0) - 0xFEE0)) : "";
     const abbrSchool = (s) => s ? s.replace(/小学校/g, "小").replace(/中学校/g, "中").replace(/支援学校/g, "支") : "";
@@ -45,11 +45,12 @@
     const getDate = () => document.getElementById('dateInput').value;
     const getDay = () => ["日","月","火","水","木","金","土"][new Date(getDate()).getDay()];
 
+    // データの読み込み・書き出し
     window.exportData = () => {
         const blob = new Blob([JSON.stringify(state)], {type: 'application/json'});
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
-        a.download = `送迎データ全バックアップ_${new Date().toLocaleDateString()}.json`;
+        a.download = `送迎データ_${getDate()}.json`;
         a.click();
     };
 
@@ -60,18 +61,16 @@
         reader.onload = (ev) => {
             try {
                 const imported = JSON.parse(ev.target.result);
-                if(confirm('現在のデータがすべて上書きされますがよろしいですか？')) {
-                    state = imported;
-                    save();
-                    alert('同期が完了しました');
-                }
-            } catch(err) { alert('ファイル形式が正しくありません'); }
+                state = imported;
+                save();
+                alert('読み込みました');
+            } catch(err) { alert('ファイルが正しくありません'); }
         };
         reader.readAsText(file);
     };
 
-    // 時間で並び替える関数
-    const sortRoute = (members) => {
+    // 時間順に並び替え（空欄は後ろ）
+    const sortMembers = (members) => {
         return members.sort((a, b) => {
             if (!a.time) return 1;
             if (!b.time) return -1;
@@ -100,7 +99,7 @@
                     const u = remain.shift();
                     route.members.push({ uId: u ? u.id : "", time: u ? u[timeProp] : "" });
                 }
-                route.members = sortRoute(route.members);
+                route.members = sortMembers(route.members);
                 return route;
             });
         });
@@ -117,7 +116,6 @@
             const routes = cur.r[date]?.[type] || [];
             const area = document.getElementById(type + 'Area');
             area.innerHTML = routes.map((route, rIdx) => {
-                route.members.forEach(m => { if(m.uId && att[m.uId] === '欠') { m.uId = ""; m.time = ""; } });
                 return `
                 <div class="mb-1 border-2 border-black relative">
                     <button class="no-print absolute top-0 right-1 text-red-500 font-bold px-1" onclick="getCur().r['${date}']['${type}'].splice(${rIdx},1);save()">×</button>
@@ -177,9 +175,9 @@
         const eligible = cur.u.filter(x => x.days.includes(day) && att[x.id] !== '欠' && x[typeProp] === '車両');
         return `
             <td class="w-14"><input type="text" class="time-input" value="${u ? m.time : ''}" 
-                onchange="const val=toHalf(this.value); getCur().r['${date}']['${type}'][${rIdx}].members[${mIdx}].time=val; getCur().r['${date}']['${type}'][${rIdx}].members = sortRoute(getCur().r['${date}']['${type}'][${rIdx}].members); save()"></td>
+                onchange="getCur().r['${date}']['${type}'][${rIdx}].members[${mIdx}].time=toHalf(this.value); getCur().r['${date}']['${type}'][${rIdx}].members=sortMembers(getCur().r['${date}']['${type}'][${rIdx}].members); save()"></td>
             <td class="w-36 text-left px-1 border-r border-black">
-                <select class="user-name-select" onchange="const val=this.value; const usr=getCur().u.find(x=>x.id===val); getCur().r['${date}']['${type}'][${rIdx}].members[${mIdx}].uId=val; getCur().r['${date}']['${type}'][${rIdx}].members[${mIdx}].time=usr?(usr['${type === "迎え" ? "inTime" : "outTime"}']):''; getCur().r['${date}']['${type}'][${rIdx}].members = sortRoute(getCur().r['${date}']['${type}'][${rIdx}].members); save();"><option value="">--</option>${eligible.map(x=>`<option value="${x.id}" ${uId===x.id?'selected':''}>${x.name}</option>`).join('')}</select>
+                <select class="user-name-select" onchange="const v=this.value; const usr=getCur().u.find(x=>x.id===v); getCur().r['${date}']['${type}'][${rIdx}].members[${mIdx}].uId=v; getCur().r['${date}']['${type}'][${rIdx}].members[${mIdx}].time=usr?(usr['${type==='迎え'?'inTime':'outTime'}']):''; getCur().r['${date}']['${type}'][${rIdx}].members=sortMembers(getCur().r['${date}']['${type}'][${rIdx}].members); save()"><option value="">--</option>${eligible.map(x=>`<option value="${x.id}" ${uId===x.id?'selected':''}>${x.name}</option>`).join('')}</select>
                 <span class="school-info">${u ? abbrSchool(u.school) + ' ' + formatGrade(u.grade) : ''}</span>
             </td>`;
     }
@@ -222,9 +220,9 @@
 
 <header class="bg-slate-900 text-white p-2 no-print flex justify-between items-center shadow-lg">
     <div class="flex items-center gap-3">
-        <h1 class="text-xl font-black italic text-blue-400">運行管理 v49.1</h1>
+        <h1 class="text-xl font-black italic text-blue-400">運行管理 v49.2</h1>
         <div class="flex bg-slate-800 rounded p-1 gap-1">
-            <button onclick="state.curIdx=0;save()" class="px-2 hover:bg-slate-600 rounded">星の村</button>
+            <button onclick="state.curIdx=0;save()" class="px-2 hover:bg-slate-600 rounded">星 of 村</button>
             <button onclick="state.curIdx=1;save()" class="px-2 hover:bg-slate-600 rounded">カラフル</button>
             <button onclick="state.curIdx=2;save()" class="px-2 hover:bg-slate-600 rounded">プリズム</button>
         </div>
@@ -276,9 +274,4 @@
         <div class="grid grid-cols-3 gap-6">
             <section><h4 class="font-bold text-sm mb-2 border-l-4 border-black pl-2">職員</h4><table id="staffTable" class="text-[10px]"></table><button onclick="addMaster('s')" class="w-full border-2 border-dashed p-1 mt-2">+ 職員追加</button></section>
             <section><h4 class="font-bold text-sm mb-2 border-l-4 border-black pl-2">車両</h4><table id="vehicleTable" class="text-[10px]"></table><button onclick="addMaster('v')" class="w-full border-2 border-dashed p-1 mt-2">+ 車両追加</button></section>
-            <section><h4 class="font-bold text-sm mb-2 border-l-4 border-black pl-2">携帯・連絡先</h4><table id="phoneTable" class="text-[10px]"></table><button onclick="addMaster('p')" class="w-full border-2 border-dashed p-1 mt-2">+ 連絡先追加</button></section>
-        </div>
-    </div>
-</main>
-</body>
-</html>
+            <section><h4 class="font-bold text-sm mb-2 border-l-4 border-black pl-2">携帯・連絡先</h4><table id="phoneTable" class="text-[10px]"></table><button onclick
