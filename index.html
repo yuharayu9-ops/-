@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>運行管理システム v49.3</title>
+    <title>運行管理システム v49.5</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { font-family: sans-serif; background: #f1f5f9; font-size: 11px; color: #000; }
@@ -16,8 +16,8 @@
         .day-chip { cursor: pointer; padding: 0 4px; border-radius: 2px; font-size: 9px; border: 1px solid #ccc; }
         .day-active { background-color: #2563eb; color: white; border-color: #1e40af; }
         .day-inactive { background-color: #e5e7eb; color: #9ca3af; }
-        /* 自力・保護者の時間入力欄用スタイル */
-        .self-time-input { background: transparent; border-bottom: 1px solid #3b82f6; width: 40px; text-align: center; color: #1e40af; font-weight: bold; }
+        /* 時間入力用の下線スタイル */
+        .self-time-input { background: transparent; border-bottom: 1px solid #3b82f6; width: 40px; text-align: center; color: #1e40af; font-weight: bold; outline: none; }
         @media print { 
             .no-print { display: none !important; } 
             .print-area { width: 100% !important; border: none !important; margin: 0 !important; padding: 0 !important; } 
@@ -47,6 +47,7 @@
     const getDate = () => document.getElementById('dateInput').value;
     const getDay = () => ["日","月","火","水","木","金","土"][new Date(getDate()).getDay()];
 
+    // 保存・読込機能
     window.exportData = () => {
         const blob = new Blob([JSON.stringify(state)], {type: 'application/json'});
         const a = document.createElement('a');
@@ -152,6 +153,7 @@
             const selfUsers = cur.u.filter(u => u.days.includes(day) && u[typeProp] !== '車両' && att[u.id] !== '欠');
             
             document.getElementById(type + 'Self').innerHTML = selfUsers.length ? `<span class="text-blue-700 font-bold">【自力・保護者】</span> ${selfUsers.map(u => {
+                // 個別の保存データがあれば優先、なければマスタから表示
                 const currentTime = cur.r[date].selfTimes[u.id + type] || u[timeProp];
                 return `${u.name}(<input type="text" class="self-time-input" value="${currentTime}" onchange="getCur().r['${date}'].selfTimes['${u.id}${type}']=toHalf(this.value);save()">)`;
             }).join(', ')}` : '';
@@ -227,17 +229,17 @@
 
 <header class="bg-slate-900 text-white p-2 no-print flex justify-between items-center shadow-lg">
     <div class="flex items-center gap-3">
-        <h1 class="text-xl font-black italic text-blue-400">運行管理 v49.3</h1>
-        <div class="flex bg-slate-800 rounded p-1 gap-1">
+        <h1 class="text-xl font-black italic text-blue-400 leading-none">運行管理 v49.5</h1>
+        <div class="flex bg-slate-800 rounded p-1 gap-1 text-[10px]">
             <button onclick="state.curIdx=0;save()" class="px-2 hover:bg-slate-600 rounded">星の村</button>
             <button onclick="state.curIdx=1;save()" class="px-2 hover:bg-slate-600 rounded">カラフル</button>
             <button onclick="state.curIdx=2;save()" class="px-2 hover:bg-slate-600 rounded">プリズム</button>
         </div>
-        <input type="date" id="dateInput" onchange="render()" class="text-black px-2 py-1 rounded font-bold">
+        <input type="date" id="dateInput" onchange="render()" class="text-black px-2 py-1 rounded font-bold text-sm">
     </div>
     <div class="flex gap-2">
-        <button onclick="exportData()" class="bg-indigo-600 px-3 py-1 rounded font-bold text-[10px] hover:bg-indigo-500">全データ保存(共有用)</button>
-        <label class="bg-slate-600 px-3 py-1 rounded cursor-pointer text-[10px] font-bold hover:bg-slate-500">全データ取込(同期)<input type="file" onchange="importData(event)" class="hidden"></label>
+        <button onclick="exportData()" class="bg-indigo-600 px-3 py-1 rounded font-bold text-[10px] hover:bg-indigo-500">全データ保存</button>
+        <label class="bg-slate-600 px-3 py-1 rounded cursor-pointer text-[10px] font-bold hover:bg-slate-500">全データ取込<input type="file" onchange="importData(event)" class="hidden"></label>
         <button onclick="autoAssign()" class="bg-orange-600 px-3 py-1 rounded font-bold text-[10px]">自動作成</button>
         <button onclick="window.print()" class="bg-blue-600 px-6 py-1 rounded font-bold text-[10px]">印刷</button>
     </div>
@@ -275,7 +277,7 @@
         <h3 class="font-black text-xl border-b-4 border-blue-500 mb-6 text-blue-800 italic">システム設定（マスタ管理）</h3>
         <section class="mb-8">
             <h4 class="font-bold text-sm mb-2 text-red-700">【利用者マスタ】</h4>
-            <table class="text-[10px] w-full mb-2"><tr class="bg-gray-700 text-white"><th>氏名</th><th>通所日</th><th>学校名</th><th>学年</th><th>迎区分</th><th>迎時間</th><th>送区分</th><th>送時間</th><th>優先車両</th><th>特記(自動表示)</th><th>消</th></tr><tbody id="userTable"></tbody></table>
+            <table class="text-[10px] w-full mb-2"><tr class="bg-gray-700 text-white"><th>氏名</th><th>通所日</th><th>学校名</th><th>学年</th><th>迎区分</th><th>迎時間</th><th>送区分</th><th>送時間</th><th>優先車両</th><th>特記</th><th>消</th></tr><tbody id="userTable"></tbody></table>
             <button onclick="addMaster('u')" class="w-full border-2 border-dashed p-2 bg-gray-50 font-bold hover:bg-blue-50">+ 利用者を追加</button>
         </section>
         <div class="grid grid-cols-3 gap-6">
