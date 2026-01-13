@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>運行管理システム v49.7</title>
+    <title>運行管理システム v49.8</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { font-family: sans-serif; background: #f1f5f9; font-size: 11px; color: #000; }
@@ -49,47 +49,70 @@
         reader.readAsText(file);
     };
 
-    // CSV読み込み機能（アップロードされたファイル形式に特化）
+    // CSV専用パーサー（クォート内の改行対応）
+    function parseCSV(text) {
+        const rows = [];
+        let row = [];
+        let col = "";
+        let inQuote = false;
+        for (let i = 0; i < text.length; i++) {
+            const char = text[i];
+            const next = text[i+1];
+            if (char === '"' && inQuote && next === '"') { col += '"'; i++; }
+            else if (char === '"') { inQuote = !inQuote; }
+            else if (char === ',' && !inQuote) { row.push(col); col = ""; }
+            else if ((char === '\r' || char === '\n') && !inQuote) {
+                if (col !== "" || row.length > 0) {
+                    row.push(col); rows.push(row);
+                    row = []; col = "";
+                }
+                if (char === '\r' && next === '\n') i++;
+            } else { col += char; }
+        }
+        if (col !== "" || row.length > 0) { row.push(col); rows.push(row); }
+        return rows;
+    }
+
+    // CSV読み込み
     window.importCSV = (e) => {
         const file = e.target.files[0]; if(!file) return;
         const reader = new FileReader();
         reader.onload = (ev) => {
-            const lines = ev.target.result.split(/\r\n|\n/);
+            const rows = parseCSV(ev.target.result);
             const cur = getCur();
             let count = 0;
 
-            lines.forEach((line, i) => {
-                if (i === 0 || !line) return; 
-                // カンマ区切りだが、ダブルクォーテーション内の改行やカンマを考慮
-                const cols = line.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g);
-                if (!cols || cols.length < 5) return;
+            rows.forEach((cols, i) => {
+                if (i === 0 || cols.length < 2) return; // ヘッダー飛ばし
 
-                const rawName = cols[0].replace(/"/g, ''); // クォート除去
-                const nameParts = rawName.split(/\r\n|\n| /);
-                const name = nameParts.length > 1 ? nameParts[nameParts.length - 1] : nameParts[0]; // 改行があれば後ろ（漢字）を取る
+                // 氏名抽出（改行があれば2行目＝漢字を採用）
+                const nameRaw = cols[0] || "";
+                const nameLines = nameRaw.split(/\r\n|\n/);
+                const name = (nameLines.length > 1 ? nameLines[1] : nameLines[0]).trim();
 
-                const group = cols[1].replace(/"/g, '');
+                // 曜日抽出
+                const groupRaw = cols[1] || "";
                 let days = "";
-                ["月","火","水","木","金","土"].forEach(d => { if(group.includes(d + "曜")) days += d; });
+                ["月","火","水","木","金","土"].forEach(d => { if(groupRaw.includes(d + "曜")) days += d; });
 
-                const school = cols[3].replace(/"/g, '');
-                const grade = cols[4].replace(/"/g, '');
+                const school = (cols[3] || "").trim();
+                const grade = (cols[4] || "").trim();
 
                 cur.u.push({
                     id: 'ID' + Date.now() + i,
-                    name: name,
+                    name: name || "不明",
                     school: school,
                     grade: grade,
                     inType: '車両', outType: '車両',
-                    inTime: "14:00", outTime: "17:30", // デフォルト値
+                    inTime: '14:00', outTime: '17:30',
                     days: days || '月火水木金土',
-                    prefCar: '',
-                    masterNote: ''
+                    prefCar: '', masterNote: ''
                 });
                 count++;
             });
             save(); alert(count + ' 名のデータを取り込みました');
         };
+        // 星の村.csvに合わせてShift-JISで読み込み
         reader.readAsText(file, 'Shift-JIS');
     };
 
@@ -190,7 +213,7 @@
 
 <header class="bg-slate-900 text-white p-2 no-print flex justify-between items-center shadow-lg">
     <div class="flex items-center gap-3">
-        <h1 class="text-xl font-black italic text-blue-400">運行管理 v49.7</h1>
+        <h1 class="text-xl font-black italic text-blue-400">運行管理 v49.8</h1>
         <div class="flex bg-slate-800 rounded p-1 gap-1">
             <button onclick="state.curIdx=0;save()" class="px-2 hover:bg-slate-600 rounded">星の村</button>
             <button onclick="state.curIdx=1;save()" class="px-2 hover:bg-slate-600 rounded">カラフル</button>
