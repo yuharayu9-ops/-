@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>運行管理システム v49.8</title>
+    <title>運行管理システム v50.0</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { font-family: sans-serif; background: #f1f5f9; font-size: 11px; color: #000; }
@@ -17,6 +17,11 @@
         .day-active { background-color: #2563eb; color: white; border-color: #1e40af; }
         .day-inactive { background-color: #e5e7eb; color: #9ca3af; }
         .self-time-input { background: transparent; border-bottom: 1px solid #3b82f6; width: 40px; text-align: center; color: #1e40af; font-weight: bold; }
+        
+        /* オレンジ境界線用のスタイル */
+        .border-t-heavy { border-top: 4px solid #000 !important; }
+        .orange-bg { background-color: #fff7ed !important; }
+
         @media print { .no-print { display: none !important; } .print-area { width: 100% !important; border: none !important; margin: 0 !important; padding: 0 !important; } @page { size: A4; margin: 5mm; } }
     </style>
 </head>
@@ -49,23 +54,15 @@
         reader.readAsText(file);
     };
 
-    // CSV専用パーサー（クォート内の改行対応）
     function parseCSV(text) {
-        const rows = [];
-        let row = [];
-        let col = "";
-        let inQuote = false;
+        const rows = []; let row = []; let col = ""; let inQuote = false;
         for (let i = 0; i < text.length; i++) {
-            const char = text[i];
-            const next = text[i+1];
+            const char = text[i]; const next = text[i+1];
             if (char === '"' && inQuote && next === '"') { col += '"'; i++; }
             else if (char === '"') { inQuote = !inQuote; }
             else if (char === ',' && !inQuote) { row.push(col); col = ""; }
             else if ((char === '\r' || char === '\n') && !inQuote) {
-                if (col !== "" || row.length > 0) {
-                    row.push(col); rows.push(row);
-                    row = []; col = "";
-                }
+                if (col !== "" || row.length > 0) { row.push(col); rows.push(row); row = []; col = ""; }
                 if (char === '\r' && next === '\n') i++;
             } else { col += char; }
         }
@@ -73,7 +70,6 @@
         return rows;
     }
 
-    // CSV読み込み
     window.importCSV = (e) => {
         const file = e.target.files[0]; if(!file) return;
         const reader = new FileReader();
@@ -81,38 +77,29 @@
             const rows = parseCSV(ev.target.result);
             const cur = getCur();
             let count = 0;
-
             rows.forEach((cols, i) => {
-                if (i === 0 || cols.length < 2) return; // ヘッダー飛ばし
-
-                // 氏名抽出（改行があれば2行目＝漢字を採用）
+                if (i === 0 || cols.length < 2) return;
                 const nameRaw = cols[0] || "";
                 const nameLines = nameRaw.split(/\r\n|\n/);
                 const name = (nameLines.length > 1 ? nameLines[1] : nameLines[0]).trim();
-
-                // 曜日抽出
                 const groupRaw = cols[1] || "";
                 let days = "";
                 ["月","火","水","木","金","土"].forEach(d => { if(groupRaw.includes(d + "曜")) days += d; });
-
-                const school = (cols[3] || "").trim();
-                const grade = (cols[4] || "").trim();
-
+                
                 cur.u.push({
                     id: 'ID' + Date.now() + i,
                     name: name || "不明",
-                    school: school,
-                    grade: grade,
-                    inType: '車両', outType: '車両',
-                    inTime: '14:00', outTime: '17:30',
+                    school: (cols[3] || "").trim(),
+                    grade: (cols[4] || "").trim(),
+                    inType: '車両', outType: '車両', inTime: '14:00', outTime: '17:30',
                     days: days || '月火水木金土',
-                    prefCar: '', masterNote: ''
+                    prefCar: '',
+                    masterNote: groupRaw.includes("オレンジ") ? "オレンジ" : ""
                 });
                 count++;
             });
             save(); alert(count + ' 名のデータを取り込みました');
         };
-        // 星の村.csvに合わせてShift-JISで読み込み
         reader.readAsText(file, 'Shift-JIS');
     };
 
@@ -176,8 +163,36 @@
             }).join(', ')}` : '';
         });
 
-        document.getElementById('attendList').innerHTML = cur.u.filter(u => u.days.includes(day)).map((u, idx) => `
-            <tr class="h-8 ${att[u.id]==='欠' ? 'is-absent' : ''}"><td>${idx+1}</td><td class="no-print"><button onclick="const c=getCur(); if(!c.attendance['${date}']) c.attendance['${date}']={}; c.attendance['${date}']['${u.id}']=c.attendance['${date}']['${u.id}']==='欠'?'出':'欠'; save();" class="border px-1 bg-white font-bold">${att[u.id]==='欠'?'欠':'出'}</button></td><td class="w-24 font-bold text-[13px]">${u.name}</td><td class="text-[10px] w-24">${abbrSchool(u.school)} / ${formatGrade(u.grade)}</td><td class="px-1"><input type="text" class="w-full bg-transparent font-bold text-red-600 text-[11px]" value="${u.note || u.masterNote || ''}"></td></tr>`).join('');
+        // リスト作成
+        let displayUsers = cur.u.filter(u => u.days.includes(day));
+        const isPrismMonTue = OFFICE_NAMES[state.curIdx] === "プリズム" && (day === "月" || day === "火");
+        
+        if (isPrismMonTue) {
+            displayUsers.sort((a, b) => {
+                const aIsOrange = (a.masterNote || "").includes("オレンジ");
+                const bIsOrange = (b.masterNote || "").includes("オレンジ");
+                return aIsOrange === bIsOrange ? 0 : aIsOrange ? 1 : -1;
+            });
+        }
+
+        let html = "";
+        displayUsers.forEach((u, idx) => {
+            const isOrange = (u.masterNote || "").includes("オレンジ");
+            const prevIsOrange = idx > 0 ? (displayUsers[idx-1].masterNote || "").includes("オレンジ") : false;
+            
+            // 境界線の判定：今の人がオレンジで、前の人がオレンジでない場合に太線を引く
+            const needsHeavyBorder = isPrismMonTue && isOrange && !prevIsOrange && idx !== 0;
+            
+            html += `<tr class="h-8 ${att[u.id]==='欠' ? 'is-absent' : ''} ${isOrange ? 'orange-bg' : ''} ${needsHeavyBorder ? 'border-t-heavy' : ''}">
+                <td>${idx+1}</td>
+                <td class="no-print"><button onclick="const c=getCur(); if(!c.attendance['${date}']) c.attendance['${date}']={}; c.attendance['${date}']['${u.id}']=c.attendance['${date}']['${u.id}']==='欠'?'出':'欠'; save();" class="border px-1 bg-white font-bold">${att[u.id]==='欠'?'欠':'出'}</button></td>
+                <td class="w-24 font-bold text-[13px]">${u.name}</td>
+                <td class="text-[10px] w-24">${abbrSchool(u.school)} / ${formatGrade(u.grade)}</td>
+                <td class="px-1"><input type="text" class="w-full bg-transparent font-bold text-red-600 text-[11px]" value="${u.note || u.masterNote || ''}"></td>
+            </tr>`;
+        });
+        document.getElementById('attendList').innerHTML = html;
+
         document.getElementById('staffStatusList').innerHTML = cur.s.filter(s => s.days.includes(day)).map((s, idx) => `<tr class="h-8"><td>${idx+1}</td><td class="font-bold text-[12px]">${s.name}</td><td><input type="text" class="w-24 text-center text-[11px] font-bold" value="${s.todayPhone || ''}" onchange="getCur().s.find(x=>x.id==='${s.id}').todayPhone=this.value;save()"></td></tr>`).join('');
         updateMasterTables(cur);
     };
@@ -213,7 +228,7 @@
 
 <header class="bg-slate-900 text-white p-2 no-print flex justify-between items-center shadow-lg">
     <div class="flex items-center gap-3">
-        <h1 class="text-xl font-black italic text-blue-400">運行管理 v49.8</h1>
+        <h1 class="text-xl font-black italic text-blue-400">運行管理 v50.0</h1>
         <div class="flex bg-slate-800 rounded p-1 gap-1">
             <button onclick="state.curIdx=0;save()" class="px-2 hover:bg-slate-600 rounded">星の村</button>
             <button onclick="state.curIdx=1;save()" class="px-2 hover:bg-slate-600 rounded">カラフル</button>
@@ -248,7 +263,7 @@
             </div>
         </div>
     </div>
-
+    
     <div class="no-print mt-10 p-6 bg-white border-2 shadow-2xl">
         <h3 class="font-black text-xl border-b-4 border-blue-500 mb-6 text-blue-800 italic">システム設定（マスタ管理）</h3>
         <section class="mb-8">
